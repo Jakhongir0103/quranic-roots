@@ -53,18 +53,19 @@ export function Stage1Flashcard({
         <div className={`flip-inner ${flipped ? "flipped" : ""}`}>
           {/* Front: Arabic only */}
           <div className="flip-face flex flex-col items-center justify-center rounded-3xl border border-border bg-card p-8 shadow-sm">
-            <div className="arabic-quran text-6xl text-foreground sm:text-7xl">{word.arabic}</div>
-            <p className="mt-8 text-xs uppercase tracking-[0.22em] text-muted-foreground">
+            <div className="flex min-h-40 items-center justify-center">
+              <div className="arabic-quran text-center text-6xl leading-[2.3] text-foreground sm:text-7xl" dir="rtl">
+                {word.arabic}
+              </div>
+            </div>
+            <p className="mt-10 text-xs uppercase tracking-[0.22em] text-muted-foreground">
               Tap to reveal
             </p>
           </div>
 
-          {/* Back: meaning + grammar + usage */}
-          <div className="flip-back flex flex-col items-center justify-center rounded-3xl border border-border bg-card p-6 text-center shadow-sm">
-            <div className="arabic-quran text-2xl text-muted-foreground">{word.arabic}</div>
-            <div className="mt-3 font-display text-3xl font-semibold tracking-tight">
-              {word.meaning}
-            </div>
+          {/* Back: English meaning */}
+          <div className="flip-face flip-back flex flex-col items-center justify-center rounded-3xl border border-border bg-card p-6 text-center shadow-sm">
+            <div className="font-display text-4xl font-semibold tracking-tight">{word.meaning}</div>
             <div className="mt-2 text-xs uppercase tracking-wider text-muted-foreground">
               {word.partOfSpeech}
             </div>

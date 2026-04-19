@@ -7,7 +7,7 @@ import { Flame, BookOpenCheck, Activity, Trophy, ScrollText } from "lucide-react
 export const Route = createFileRoute("/progress")({
   head: () => ({
     meta: [
-      { title: "Progress — Mizan" },
+      { title: "Progress — Fahm" },
       {
         name: "description",
         content: "Your Quranic vocabulary mastery, by stage and deck.",

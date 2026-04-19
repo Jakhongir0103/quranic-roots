@@ -12,3 +12,9 @@ services:
         sync: false
       - key: GEMINI_MODEL
         value: gemini-3-flash-preview
+      - key: GOOGLE_TTS_API_KEY
+        sync: false
+      - key: GOOGLE_TTS_LANGUAGE_CODE
+        value: ar-XA
+      - key: GOOGLE_TTS_VOICE
+        value: ar-XA-Wavenet-B

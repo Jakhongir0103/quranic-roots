@@ -7,6 +7,7 @@ import { StageBadge } from "../StageBadge";
 import { Loader2, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { useArabicTts } from "@/hooks/useArabicTts";
 
 interface Turn {
   role: "ai" | "user";
@@ -15,15 +16,6 @@ interface Turn {
   grade?: "strong" | "adequate" | "weak";
   matched_word?: string;
   is_final?: boolean;
-}
-
-function speak(text: string) {
-  if (typeof window === "undefined" || !window.speechSynthesis) return;
-  const utter = new SpeechSynthesisUtterance(text);
-  utter.lang = "ar-SA";
-  utter.rate = 0.85;
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(utter);
 }
 
 const colorMap: Record<string, string> = {
@@ -52,6 +44,7 @@ export function Stage5Interrogation({
   const [usedWords, setUsedWords] = useState<Set<string>>(new Set());
   const [scores, setScores] = useState<("strong" | "adequate" | "weak")[]>([]);
   const requested = useRef(false);
+  const { speakArabic } = useArabicTts();
 
   const wordPayload = useMemo(
     () => words.map((w) => ({ arabic: w.arabic, meaning: w.meaning })),
@@ -90,7 +83,7 @@ export function Stage5Interrogation({
             is_final: r.is_final,
           },
         ]);
-        speak(r.arabic);
+        void speakArabic(r.arabic);
         if (r.is_final) {
           setDone(true);
         }
@@ -102,7 +95,7 @@ export function Stage5Interrogation({
         requested.current = false;
       }
     })();
-  }, [turns, done, error, nextTurn, wordPayload, usedWords, maxTurns]);
+  }, [turns, done, error, nextTurn, wordPayload, usedWords, maxTurns, speakArabic]);
 
   const finalize = (allScores: ("strong" | "adequate" | "weak")[]) => {
     if (allScores.length === 0) return onComplete("weak");
@@ -198,7 +191,7 @@ export function Stage5Interrogation({
               </span>
               {t.role === "ai" && (
                 <button
-                  onClick={() => speak(t.arabic)}
+                  onClick={() => void speakArabic(t.arabic)}
                   className="text-muted-foreground hover:text-foreground"
                   aria-label="استمع"
                 >

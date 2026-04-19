@@ -13,7 +13,7 @@ import { ArrowLeft, Check, Sparkles } from "lucide-react";
 export const Route = createFileRoute("/study/$deckId")({
   head: () => ({
     meta: [
-      { title: "Study — Mizan" },
+      { title: "Study — Fahm" },
       { name: "description", content: "Active study session." },
     ],
   }),

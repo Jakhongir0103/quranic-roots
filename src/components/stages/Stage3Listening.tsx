@@ -6,6 +6,7 @@ import type { Grade } from "@/lib/srs";
 import { StageBadge } from "../StageBadge";
 import { Loader2, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useArabicTts } from "@/hooks/useArabicTts";
 
 interface Exchange {
   speaker: "A" | "B";
@@ -29,15 +30,6 @@ interface DialogueData {
   }[];
 }
 
-function speak(text: string) {
-  if (typeof window === "undefined" || !window.speechSynthesis) return;
-  const utter = new SpeechSynthesisUtterance(text);
-  utter.lang = "ar-SA";
-  utter.rate = 0.85;
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(utter);
-}
-
 /** Highlight any deck-word occurrences inside an Arabic line. */
 function HighlightedArabic({
   text,
@@ -58,7 +50,7 @@ function HighlightedArabic({
     <>
       {parts.map((p, i) =>
         targets.includes(p) ? (
-          <span key={i} className="rounded bg-accent/25 px-1 text-accent-foreground">
+          <span key={i} className="rounded bg-warning/35 px-1 text-black">
             {p}
           </span>
         ) : (
@@ -87,6 +79,7 @@ export function Stage3Listening({
   const [qIndex, setQIndex] = useState(0);
   const [qScore, setQScore] = useState(0);
   const [qPicked, setQPicked] = useState<number | null>(null);
+  const { speakArabic, speakArabicLines } = useArabicTts();
 
   const targetForms = useMemo(() => words.map((w) => w.arabic), [words]);
   const wordPayload = useMemo(
@@ -132,7 +125,7 @@ export function Stage3Listening({
 
   const revealNext = () => {
     const next = revealed + 1;
-    speak(data.exchanges[revealed].arabic);
+    void speakArabic(data.exchanges[revealed].arabic);
     if (revealed === data.pause_after_index) {
       setPhase("choice");
       return;
@@ -192,7 +185,7 @@ export function Stage3Listening({
               Speaker {ex.speaker}
             </span>
             <button
-              onClick={() => speak(ex.arabic)}
+              onClick={() => void speakArabic(ex.arabic)}
               className="text-muted-foreground hover:text-foreground"
               aria-label="Play line"
             >
@@ -212,9 +205,27 @@ export function Stage3Listening({
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-2">
         <StageBadge stage={3} />
-        <span className="truncate text-[11px] uppercase tracking-wider text-muted-foreground">
-          {data.topic}
-        </span>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-[11px] uppercase tracking-wider text-muted-foreground">
+            {data.topic}
+          </span>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="h-8 shrink-0 rounded-lg px-2"
+            onClick={() =>
+              speakArabicLines(
+                data.exchanges
+                  .slice(0, Math.min(revealed + 1, data.exchanges.length))
+                  .map((ex) => ex.arabic),
+              )
+            }
+          >
+            <Volume2 className="mr-1.5 h-3.5 w-3.5" />
+            Play
+          </Button>
+        </div>
       </div>
 
       {dialogueList}

@@ -6,7 +6,7 @@ import { ArrowRight, BookOpen, Sparkles } from "lucide-react";
 export const Route = createFileRoute("/decks/")({
   head: () => ({
     meta: [
-      { title: "Decks — Mizan" },
+      { title: "Decks — Fahm" },
       { name: "description", content: "Browse preset Quranic decks or create your own." },
     ],
   }),

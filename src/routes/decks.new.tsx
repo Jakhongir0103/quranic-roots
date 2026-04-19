@@ -19,7 +19,7 @@ export const Route = createFileRoute("/decks/new")({
   validateSearch: searchSchema,
   head: () => ({
     meta: [
-      { title: "New deck — Mizan" },
+      { title: "New deck — Fahm" },
       { name: "description", content: "Create a custom Quranic vocabulary deck." },
     ],
   }),

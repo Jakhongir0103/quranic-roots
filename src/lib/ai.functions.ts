@@ -3,7 +3,7 @@ import { z } from "zod";
 
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3-flash-preview";
-const FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-3-flash-preview"];
+const FALLBACK_MODELS = ["gemini-3.1-flash-lite-preview"];
 
 function getModelCandidates() {
   return [...new Set([DEFAULT_MODEL, ...FALLBACK_MODELS].filter(Boolean))];

@@ -33,14 +33,14 @@ export const Route = createRootRoute({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Mizan — Quranic Vocabulary Through Stages" },
+      { title: "Fahm — Quranic Vocabulary Through Stages" },
       {
         name: "description",
         content:
-          "Mizan teaches Quranic Arabic vocabulary through five immersive stages: flashcards, context, listening, cloze, and AI-graded mastery.",
+          "Fahm teaches Quranic Arabic vocabulary through five immersive stages: flashcards, context, listening, cloze, and AI-graded mastery.",
       },
-      { name: "author", content: "Mizan" },
-      { property: "og:title", content: "Mizan — Quranic Vocabulary Through Stages" },
+      { name: "author", content: "Fahm" },
+      { property: "og:title", content: "Fahm — Quranic Vocabulary Through Stages" },
       { property: "og:description", content: "Five-stage SRS for Quranic Arabic vocabulary." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },

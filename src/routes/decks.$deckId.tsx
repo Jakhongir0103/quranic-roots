@@ -7,8 +7,8 @@ import { ArrowRight, Lock, Plus } from "lucide-react";
 export const Route = createFileRoute("/decks/$deckId")({
   head: ({ params }) => ({
     meta: [
-      { title: `Deck — Mizan` },
-      { name: "description", content: `Study deck ${params.deckId} in Mizan.` },
+      { title: `Deck — Fahm` },
+      { name: "description", content: `Study deck ${params.deckId} in Fahm.` },
     ],
   }),
   component: DeckPreview,
@@ -96,14 +96,18 @@ function DeckPreview() {
                   return (
                     <li
                       key={w.id}
-                      className="flex items-center justify-between rounded-xl border border-border bg-card px-3 py-2.5"
+                      className="grid min-h-24 grid-cols-[1fr_auto] items-center gap-3 rounded-xl border border-border bg-card px-4 py-3"
                     >
-                      <div>
-                        <div className="arabic-quran text-xl">{w.arabic}</div>
-                        <div className="text-xs text-muted-foreground">{w.meaning}</div>
+                      <div className="min-w-0 space-y-1.5">
+                        <div className="arabic-quran text-right text-2xl leading-loose text-foreground" dir="rtl">
+                          {w.arabic}
+                        </div>
+                        <div className="break-words text-sm leading-snug text-muted-foreground">
+                          {w.meaning}
+                        </div>
                       </div>
                       <span
-                        className="h-2 w-2 rounded-full"
+                        className="h-2 w-2 shrink-0 rounded-full"
                         style={{ backgroundColor: `var(--stage-${stage})` }}
                         title={`Stage ${stage}`}
                       />

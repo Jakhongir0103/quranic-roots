@@ -73,7 +73,7 @@ export interface UserSetting {
   value: unknown;
 }
 
-export class MizanDB extends Dexie {
+export class FahmDB extends Dexie {
   decks!: Table<Deck, number>;
   words!: Table<Word, number>;
   wordStages!: Table<WordStage, number>;
@@ -84,7 +84,7 @@ export class MizanDB extends Dexie {
   userSettings!: Table<UserSetting, string>;
 
   constructor() {
-    super("mizan");
+    super("fahm");
     this.version(1).stores({
       decks: "++id, name, type, createdAt",
       words: "++id, deckId, batchNumber",
@@ -98,6 +98,6 @@ export class MizanDB extends Dexie {
   }
 }
 
-export const db = new MizanDB();
+export const db = new FahmDB();
 
 export const BATCH_SIZE = 7;

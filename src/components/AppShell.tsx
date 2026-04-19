@@ -11,8 +11,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur-md">
         <div className="mx-auto flex max-w-3xl items-center justify-between px-5 py-3">
           <Link to="/" className="group flex items-baseline gap-2">
-            <span className="font-display text-xl font-semibold tracking-tight">Mizan</span>
-            <span className="arabic text-sm text-muted-foreground">ميزان</span>
+            <span className="font-display text-xl font-semibold tracking-tight">Fahm</span>
+            <span className="arabic text-sm text-muted-foreground">فهم</span>
           </Link>
           <span className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
             Quranic Vocabulary

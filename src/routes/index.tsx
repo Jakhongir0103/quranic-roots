@@ -9,7 +9,7 @@ import { ArrowRight, Sparkles, Library } from "lucide-react";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Today — Mizan" },
+      { title: "Today — Fahm" },
       { name: "description", content: "Your due Quranic vocabulary reviews for today." },
     ],
   }),
