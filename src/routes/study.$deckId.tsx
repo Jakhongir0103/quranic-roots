@@ -15,10 +15,7 @@ import { ArrowLeft, Check, Sparkles } from "lucide-react";
 
 export const Route = createFileRoute("/study/$deckId")({
   head: () => ({
-    meta: [
-      { title: "Study — Fahm" },
-      { name: "description", content: "Active study session." },
-    ],
+    meta: [{ title: "Study — Fahm" }, { name: "description", content: "Active study session." }],
   }),
   component: StudySession,
 });
@@ -37,6 +34,7 @@ function StudySession() {
   const [done, setDone] = useState(false);
   const [demoMode, setDemoMode] = useState(true);
   const [demoStage, setDemoStage] = useState(1);
+  const difficulty = 3;
   // For deck-level stages, we cycle through one word per "iteration" of stages 4 (per-word misuse).
   const [perWordIndex, setPerWordIndex] = useState(0);
 
@@ -67,9 +65,7 @@ function StudySession() {
       }
       const firstBatch = [...byBatch.keys()].sort((a, b) => a - b)[0];
       // Always use ALL words from that batch for deck-wide stages
-      const allInBatch = await db.words
-        .where({ deckId: id, batchNumber: firstBatch })
-        .toArray();
+      const allInBatch = await db.words.where({ deckId: id, batchNumber: firstBatch }).toArray();
       setBatchWords(allInBatch);
     })();
   }, [id, demoMode]);
@@ -83,11 +79,13 @@ function StudySession() {
   const activeStage = demoStage; // demo mode is the only flow surfaced for now
 
   const currentStage1Word = useMemo(
-    () => (batchWords && batchWords.length > 0 ? batchWords[stage1Index % batchWords.length] : null),
+    () =>
+      batchWords && batchWords.length > 0 ? batchWords[stage1Index % batchWords.length] : null,
     [batchWords, stage1Index],
   );
   const currentPerWord = useMemo(
-    () => (batchWords && batchWords.length > 0 ? batchWords[perWordIndex % batchWords.length] : null),
+    () =>
+      batchWords && batchWords.length > 0 ? batchWords[perWordIndex % batchWords.length] : null,
     [batchWords, perWordIndex],
   );
   const dialoguePayload = useMemo(
@@ -98,17 +96,17 @@ function StudySession() {
   // Opportunistically warm Stage 3 while the learner is in earlier stages.
   useEffect(() => {
     if (dialoguePayload.length === 0) return;
-    const key = dialogueKey(dialoguePayload, deck?.name);
+    const key = dialogueKey(dialoguePayload, deck?.name, difficulty);
     void readDialogueCache(
       key,
       () =>
         generateDialogue({
-          data: { words: dialoguePayload, deckName: deck?.name },
+          data: { words: dialoguePayload, deckName: deck?.name, difficulty },
         }) as Promise<DialogueData>,
     ).catch((error) => {
       console.warn("Dialogue preload failed", error);
     });
-  }, [dialoguePayload, deck?.name, generateDialogue]);
+  }, [dialoguePayload, deck?.name, generateDialogue, difficulty]);
 
   if (batchWords === null) {
     return <div className="text-muted-foreground">Loading session…</div>;
@@ -294,13 +292,19 @@ function StudySession() {
         />
       )}
       {activeStage === 2 && (
-        <Stage2Context key={`s2-${id}-${batchWords.length}`} words={batchWords} onComplete={onDeckStage(2)} />
+        <Stage2Context
+          key={`s2-${id}-${batchWords.length}-${difficulty}`}
+          words={batchWords}
+          difficulty={difficulty}
+          onComplete={onDeckStage(2)}
+        />
       )}
       {activeStage === 3 && (
         <Stage3Listening
-          key={`s3-${id}-${batchWords.length}`}
+          key={`s3-${id}-${batchWords.length}-${difficulty}`}
           words={batchWords}
           deckName={deck?.name}
+          difficulty={difficulty}
           onComplete={onDeckStage(3)}
         />
       )}
@@ -309,8 +313,9 @@ function StudySession() {
       )}
       {activeStage === 5 && (
         <Stage5Interrogation
-          key={`s5-${id}-${batchWords.length}`}
+          key={`s5-${id}-${batchWords.length}-${difficulty}`}
           words={batchWords}
+          difficulty={difficulty}
           onComplete={onStage5}
         />
       )}

@@ -9,6 +9,43 @@ function getModelCandidates() {
   return [...new Set([DEFAULT_MODEL, ...FALLBACK_MODELS].filter(Boolean))];
 }
 
+function clampDifficulty(difficulty?: number) {
+  if (!Number.isFinite(difficulty)) return 3;
+  return Math.min(5, Math.max(1, Math.round(difficulty ?? 3)));
+}
+
+function difficultyGuidance(difficulty?: number) {
+  const level = clampDifficulty(difficulty);
+  if (level <= 2) {
+    return {
+      level,
+      extraStage2Items: 3,
+      stage3Exchanges: "6-8",
+      stage5MaxTurns: "short",
+      vocabulary:
+        "Use almost only the deck words plus very common Quranic/classical words a beginner is likely to know. Keep syntax direct and sentences short.",
+    };
+  }
+  if (level === 3) {
+    return {
+      level,
+      extraStage2Items: 4,
+      stage3Exchanges: "8-10",
+      stage5MaxTurns: "moderate",
+      vocabulary:
+        "Use all deck words and a modest amount of common outside vocabulary. Keep the Arabic coherent and natural, with moderate sentence length.",
+    };
+  }
+  return {
+    level,
+    extraStage2Items: 5,
+    stage3Exchanges: "10-12",
+    stage5MaxTurns: "longer",
+    vocabulary:
+      "Use the deck words plus a wider range of Quranic/classical outside vocabulary. Sentences may be richer, but must remain coherent and learnable.",
+  };
+}
+
 async function callGeminiOnce(
   opts: {
     system: string;
@@ -122,10 +159,7 @@ async function callGemini(opts: {
           break;
         }
 
-        console.warn(
-          `Gemini call failed on ${model} (attempt ${attempt + 1}/${ATTEMPTS})`,
-          msg,
-        );
+        console.warn(`Gemini call failed on ${model} (attempt ${attempt + 1}/${ATTEMPTS})`, msg);
       } finally {
         clearTimeout(t);
       }
@@ -186,43 +220,67 @@ const deckClozeSchema = {
       items: {
         type: "object",
         properties: {
-          arabic_word: { type: "string", description: "The exact target Arabic word from the deck (with tashkeel)" },
-          sentence_before: { type: "string", description: "Arabic text that comes before the blank (with tashkeel)" },
-          sentence_after: { type: "string", description: "Arabic text that comes after the blank (with tashkeel)" },
-          translation: { type: "string", description: "English translation with the target shown as ___" },
+          arabic_word: {
+            type: "string",
+            description: "The exact target Arabic word from the deck (with tashkeel)",
+          },
+          sentence_before: {
+            type: "string",
+            description: "Arabic text that comes before the blank (with tashkeel)",
+          },
+          sentence_after: {
+            type: "string",
+            description: "Arabic text that comes after the blank (with tashkeel)",
+          },
+          translation: {
+            type: "string",
+            description: "English translation with the target shown as ___",
+          },
         },
         required: ["arabic_word", "sentence_before", "sentence_after", "translation"],
-        
       },
     },
     distractor: {
       type: "string",
-      description: "One extra plausible Arabic word that does NOT belong to any sentence (same register, with tashkeel)",
+      description:
+        "One extra plausible Arabic word that does NOT belong to any sentence (same register, with tashkeel)",
     },
   },
   required: ["items", "distractor"],
-  
 };
 
 export const generateDeckCloze = createServerFn({ method: "POST" })
   .inputValidator(
     z.object({
-      words: z.array(z.object({ arabic: z.string(), meaning: z.string() })).min(1).max(20),
+      words: z
+        .array(z.object({ arabic: z.string(), meaning: z.string() }))
+        .min(1)
+        .max(20),
+      difficulty: z.number().int().min(1).max(5).optional(),
     }),
   )
   .handler(async ({ data }) => {
     const list = data.words.map((w, i) => `${i + 1}. ${w.arabic} — ${w.meaning}`).join("\n");
+    const guidance = difficultyGuidance(data.difficulty);
+    const targetItems = Math.min(20, data.words.length + guidance.extraStage2Items);
     return (await callGemini({
       system:
-        "You write classical/Quranic-register Arabic sentences for a vocabulary app. Use full tashkeel. Keep sentences short (5-10 words). The blank in each sentence must clearly require the assigned target word — context should disambiguate it.",
-      user: `Deck words:\n${list}\n\nFor EACH word above, write one short Arabic sentence in Quranic register where that exact word appears. Return the sentence as two parts: text BEFORE the blank and text AFTER the blank (do NOT include the target word in either part). Then provide ONE additional plausible Arabic distractor word (same register, with tashkeel) that does NOT fit any of the sentences — this is for a drag-and-drop exercise where the user must pick the right word for each blank.`,
+        "You write original classical/Quranic-register Arabic sentences for a vocabulary app. Use full tashkeel. Keep sentences short (5-10 words). The blank in each sentence must clearly require the assigned target word, and context should disambiguate it. Do not imitate Quranic ayah structure or create verse-like pastiche.",
+      user: `Deck words:\n${list}\n\nDifficulty level: ${guidance.level}/5. ${guidance.vocabulary}
+
+Write ${targetItems} short Arabic cloze sentences in Quranic register. Cover EVERY deck word above at least once, then add extra sentences by reusing suitable deck words until there are ${targetItems} total items. Return each sentence as two parts: text BEFORE the blank and text AFTER the blank (do NOT include the target word in either part). Then provide ONE additional plausible Arabic distractor word (same register, with tashkeel) that does NOT fit any of the sentences — this is for a drag-and-drop exercise where the user must pick the right word for each blank.`,
       tool: {
         name: "return_deck_cloze",
         description: "Deck-wide cloze items + 1 distractor",
         parameters: deckClozeSchema,
       },
     })) as {
-      items: { arabic_word: string; sentence_before: string; sentence_after: string; translation: string }[];
+      items: {
+        arabic_word: string;
+        sentence_before: string;
+        sentence_after: string;
+        translation: string;
+      }[];
       distractor: string;
     };
   });
@@ -233,7 +291,10 @@ export const generateDeckCloze = createServerFn({ method: "POST" })
 const dialogueSchema = {
   type: "object",
   properties: {
-    topic: { type: "string", description: "Brief English summary of the Quranic theme being discussed" },
+    topic: {
+      type: "string",
+      description: "Brief English summary of the Quranic theme being discussed",
+    },
     exchanges: {
       type: "array",
       minItems: 6,
@@ -242,14 +303,19 @@ const dialogueSchema = {
         type: "object",
         properties: {
           speaker: { type: "string", enum: ["A", "B"] },
-          arabic: { type: "string", description: "Arabic line with full tashkeel; deck words appear in their exact form" },
+          arabic: {
+            type: "string",
+            description: "Arabic line with full tashkeel; deck words appear in their exact form",
+          },
           translation: { type: "string" },
         },
         required: ["speaker", "arabic", "translation"],
-        
       },
     },
-    pause_after_index: { type: "number", description: "0-based index of a Speaker A line after which the user picks Speaker B's reply" },
+    pause_after_index: {
+      type: "number",
+      description: "0-based index of a Speaker A line after which the user picks Speaker B's reply",
+    },
     choice_options_arabic: {
       type: "array",
       minItems: 3,
@@ -270,14 +336,21 @@ const dialogueSchema = {
       items: {
         type: "object",
         properties: {
-          kind: { type: "string", enum: ["meaning", "role"], description: "meaning = what the word means; role = function/role of the word in the verse/sentence" },
-          target_word: { type: "string", description: "The deck word the question is about (Arabic, with tashkeel)" },
+          kind: {
+            type: "string",
+            enum: ["meaning", "role"],
+            description:
+              "meaning = what the word means; role = function/role of the word in the verse/sentence",
+          },
+          target_word: {
+            type: "string",
+            description: "The deck word the question is about (Arabic, with tashkeel)",
+          },
           question: { type: "string", description: "English question" },
           options: { type: "array", items: { type: "string" }, minItems: 3, maxItems: 4 },
           correct_index: { type: "number" },
         },
         required: ["kind", "target_word", "question", "options", "correct_index"],
-        
       },
     },
   },
@@ -295,23 +368,31 @@ const dialogueSchema = {
 export const generateDeckDialogue = createServerFn({ method: "POST" })
   .inputValidator(
     z.object({
-      words: z.array(z.object({ arabic: z.string(), meaning: z.string() })).min(1).max(20),
+      words: z
+        .array(z.object({ arabic: z.string(), meaning: z.string() }))
+        .min(1)
+        .max(20),
       deckName: z.string().optional(),
+      difficulty: z.number().int().min(1).max(5).optional(),
     }),
   )
   .handler(async ({ data }) => {
     const list = data.words.map((w) => `${w.arabic} (${w.meaning})`).join(", ");
+    const guidance = difficultyGuidance(data.difficulty);
     return (await callGemini({
       system:
-        "You write short Arabic dialogues set in a Quranic/Islamic discussion context (e.g. discussing a surah's meaning, a tafsir question, prayer, divine attributes). Use classical register with full tashkeel. The dialogue must NOT be everyday small talk.",
+        "You write coherent original Arabic dialogues set in a Quranic/Islamic discussion context (e.g. discussing a surah's meaning, a tafsir question, prayer, divine attributes). Use classical register with full tashkeel. The dialogue must NOT be everyday small talk, must NOT quote the Quran unless explicitly needed, and must NOT imitate ayah structure or verse cadence.",
       user: `Deck${data.deckName ? ` (${data.deckName})` : ""} words: ${list}.
 
-Compose a short dialogue (8-10 exchanges) between Speaker A and Speaker B that:
+Difficulty level: ${guidance.level}/5. ${guidance.vocabulary}
+
+Compose a short dialogue (${guidance.stage3Exchanges} exchanges) between Speaker A and Speaker B that:
 1) Stays within Quranic / Islamic-knowledge context (e.g. discussing a verse, an attribute of God, a concept like guidance, mercy, the path).
-2) Naturally uses EVERY deck word above at least once. Use the EXACT Arabic form given.
-3) Picks ONE Speaker A line where Speaker B's reply is non-obvious; mark its 0-based index as pause_after_index.
-4) Provides 3 plausible Arabic reply options (with tashkeel) for that pause point, plus an English gloss for each, and the index of the correct one.
-5) Generates 2-4 multiple choice questions in English about the dialogue:
+2) Maintains one coherent thread of discussion; every line should respond naturally to the previous line.
+3) Naturally uses EVERY deck word above at least once. Use the EXACT Arabic form given.
+4) Picks ONE Speaker A line where Speaker B's reply is non-obvious; mark its 0-based index as pause_after_index.
+5) Provides 3 plausible Arabic reply options (with tashkeel) for that pause point, plus an English gloss for each, and the index of the correct one.
+6) Generates 2-4 multiple choice questions in English about the dialogue:
    - At least one of kind="meaning" (what does the word mean here)
    - At least one of kind="role" (what role/function the word plays in the sentence/verse — e.g. "subject", "emphatic object pronoun", "marks the day of judgment", "divine attribute of mercy", etc.)
    - Each MCQ has 3-4 options; pick the index of the correct one.`,
@@ -343,7 +424,10 @@ Compose a short dialogue (8-10 exchanges) between Speaker A and Speaker B that:
 const misuseSchema = {
   type: "object",
   properties: {
-    target_word: { type: "string", description: "The deck word being tested (Arabic, with tashkeel)" },
+    target_word: {
+      type: "string",
+      description: "The deck word being tested (Arabic, with tashkeel)",
+    },
     target_meaning: { type: "string" },
     sentences: {
       type: "array",
@@ -352,16 +436,23 @@ const misuseSchema = {
       items: {
         type: "object",
         properties: {
-          arabic: { type: "string", description: "Original Arabic sentence (NOT a Quranic verse) with full tashkeel" },
+          arabic: {
+            type: "string",
+            description: "Original Arabic sentence (NOT a Quranic verse) with full tashkeel",
+          },
           translation: { type: "string" },
-          is_correct: { type: "boolean", description: "true if the target word is used correctly here, false if misused" },
+          is_correct: {
+            type: "boolean",
+            description: "true if the target word is used correctly here, false if misused",
+          },
         },
         required: ["arabic", "translation", "is_correct"],
       },
     },
     issue: {
       type: "string",
-      description: "Plain-English explanation of WHY the incorrect sentence misuses the word (semantic, grammatical, or contextual mistake).",
+      description:
+        "Plain-English explanation of WHY the incorrect sentence misuses the word (semantic, grammatical, or contextual mistake).",
     },
   },
   required: ["target_word", "target_meaning", "sentences", "issue"],
@@ -436,7 +527,10 @@ const convoTurnSchema = {
   type: "object",
   properties: {
     arabic: { type: "string", description: "AI's next Arabic line (with full tashkeel)" },
-    is_final: { type: "boolean", description: "True if this is the closing line of the conversation" },
+    is_final: {
+      type: "boolean",
+      description: "True if this is the closing line of the conversation",
+    },
   },
   required: ["arabic", "is_final"],
 };
@@ -444,7 +538,10 @@ const convoTurnSchema = {
 export const generateConversationTurn = createServerFn({ method: "POST" })
   .inputValidator(
     z.object({
-      deckWords: z.array(z.object({ arabic: z.string(), meaning: z.string() })).min(1).max(20),
+      deckWords: z
+        .array(z.object({ arabic: z.string(), meaning: z.string() }))
+        .min(1)
+        .max(20),
       remainingWords: z.array(z.string()).min(0),
       history: z
         .array(
@@ -456,6 +553,7 @@ export const generateConversationTurn = createServerFn({ method: "POST" })
         .max(40),
       turnNumber: z.number().int().min(0),
       maxTurns: z.number().int().min(1),
+      difficulty: z.number().int().min(1).max(5).optional(),
     }),
   )
   .handler(async ({ data }) => {
@@ -465,12 +563,15 @@ export const generateConversationTurn = createServerFn({ method: "POST" })
       .map((h) => `${h.role === "ai" ? "AI" : "USER"}: ${h.arabic}`)
       .join("\n");
     const isClosing = data.turnNumber + 1 >= data.maxTurns || data.remainingWords.length === 0;
+    const guidance = difficultyGuidance(data.difficulty);
 
     return (await callGemini({
       system:
-        "أنت محاور باللغة العربية الفصحى مع متعلم في سياق قرآني (آية، صفة من صفات الله، الهداية، الرحمة، يوم الدين، إلخ). استخدم تشكيلًا كاملاً. اجعل دورك قصيرًا (جملة أو جملتين). يجب أن تصاغ كل جملة بحيث يضطر المتعلم في رده إلى استعمال إحدى كلمات الرصيد المعطى — لكن لا تذكر الكلمة المتوقعة ولا تلمّح إليها صراحةً ولا تطلب منه استخدام كلمة بعينها. اجعل السياق وحده يقود اختيار الكلمة.",
+        "أنت محاور باللغة العربية الفصحى مع متعلم في سياق قرآني (آية، صفة من صفات الله، الهداية، الرحمة، يوم الدين، إلخ). استخدم تشكيلًا كاملاً. اجعل دورك قصيرًا (جملة أو جملتين). يجب أن تصاغ كل جملة بحيث يضطر المتعلم في رده إلى استعمال إحدى كلمات الرصيد المعطى — لكن لا تذكر الكلمة المتوقعة ولا تلمّح إليها صراحةً ولا تطلب منه استخدام كلمة بعينها. اجعل السياق وحده يقود اختيار الكلمة. اكتب نثرًا عربيًا أصليًا مترابطًا، ولا تقلد بناء الآيات أو إيقاعها.",
       user: `كلمات الرصيد المتاحة (لا تذكرها للمتعلم بشكل قائمة): ${deckList}.
 الكلمات التي لم يستعملها المتعلم بعد (فضّل أن يقوده السياق إليها): ${remaining || "(جميعها استُعملت — يمكن تكرار أيٍّ منها)"}.
+
+مستوى الصعوبة: ${guidance.level}/5. ${guidance.vocabulary}
 
 المحادثة حتى الآن:
 ${transcript || "(لم تبدأ بعد)"}
@@ -512,7 +613,10 @@ export const gradeConversationReply = createServerFn({ method: "POST" })
   .inputValidator(
     z.object({
       aiLine: z.string(),
-      deckWords: z.array(z.object({ arabic: z.string(), meaning: z.string() })).min(1).max(20),
+      deckWords: z
+        .array(z.object({ arabic: z.string(), meaning: z.string() }))
+        .min(1)
+        .max(20),
       userReply: z.string(),
     }),
   )
@@ -533,7 +637,11 @@ Identify which deck word the user actually used (matched_word — exact Arabic f
 - "weak": no deck word is used, or it is used with the wrong meaning, or it does not fit the AI's line.
 
 Feedback: 1-2 short sentences in Arabic.`,
-      tool: { name: "return_grade", description: "Strict per-turn grade", parameters: convoGradeSchema },
+      tool: {
+        name: "return_grade",
+        description: "Strict per-turn grade",
+        parameters: convoGradeSchema,
+      },
     })) as {
       grade: "strong" | "adequate" | "weak";
       feedback: string;
@@ -561,10 +669,21 @@ export const validateAndEnrichWord = createServerFn({ method: "POST" })
   .inputValidator(z.object({ word: z.string() }))
   .handler(async ({ data }) => {
     return (await callGemini({
-      system: "You validate Arabic words and return concise lexical metadata for a Quranic vocabulary app.",
+      system:
+        "You validate Arabic words and return concise lexical metadata for a Quranic vocabulary app.",
       user: `Word: "${data.word}". If this is a valid Arabic word (preferably Quranic register), return valid=true with concise metadata. Add full tashkeel to the arabic field. If the input is not Arabic at all, return valid=false.`,
-      tool: { name: "return_validation", description: "Return validation", parameters: validateSchema },
-    })) as { valid: boolean; arabic: string; meaning: string; partOfSpeech: string; usageNote: string };
+      tool: {
+        name: "return_validation",
+        description: "Return validation",
+        parameters: validateSchema,
+      },
+    })) as {
+      valid: boolean;
+      arabic: string;
+      meaning: string;
+      partOfSpeech: string;
+      usageNote: string;
+    };
   });
 
 /* ============================================================
@@ -586,7 +705,10 @@ const promptDeckSchema = {
           arabic: { type: "string", description: "The Arabic word with FULL tashkeel" },
           meaning: { type: "string", description: "Concise primary English meaning" },
           partOfSpeech: { type: "string" },
-          usageNote: { type: "string", description: "1 short note about how the word appears in the Quran" },
+          usageNote: {
+            type: "string",
+            description: "1 short note about how the word appears in the Quran",
+          },
         },
         required: ["arabic", "meaning", "partOfSpeech", "usageNote"],
       },

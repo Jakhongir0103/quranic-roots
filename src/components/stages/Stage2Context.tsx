@@ -20,11 +20,22 @@ interface Token {
   isDistractor: boolean;
 }
 
+function cleanClozeItems(items: ClozeItem[]) {
+  return items.filter((item) => {
+    const target = item.arabic_word.trim();
+    const before = item.sentence_before.trim();
+    const after = item.sentence_after.trim();
+    return target && (before || after);
+  });
+}
+
 export function Stage2Context({
   words,
+  difficulty = 3,
   onComplete,
 }: {
   words: Word[];
+  difficulty?: number;
   onComplete: (grade: Grade) => void;
 }) {
   const generate = useServerFn(generateDeckCloze);
@@ -46,10 +57,12 @@ export function Stage2Context({
     let alive = true;
     (async () => {
       try {
-        const r = await generate({ data: { words: wordPayload } });
+        const r = await generate({ data: { words: wordPayload, difficulty } });
         if (!alive) return;
-        setItems(r.items);
-        const baseTokens: Token[] = r.items.map((it, i) => ({
+        const validItems = cleanClozeItems(r.items);
+        if (validItems.length === 0) throw new Error("EMPTY_CLOZE_ITEMS");
+        setItems(validItems);
+        const baseTokens: Token[] = validItems.map((it, i) => ({
           id: `t-${i}`,
           text: it.arabic_word,
           isDistractor: false,
@@ -66,7 +79,7 @@ export function Stage2Context({
     return () => {
       alive = false;
     };
-  }, [generate, wordPayload]);
+  }, [generate, wordPayload, difficulty]);
 
   if (error) {
     return (
@@ -88,11 +101,15 @@ export function Stage2Context({
 
   // Correct token id for sentence i is `t-${i}` (distractor never fits)
   const tryPlace = (sentenceIdx: number, tokenId: string) => {
-    const correctId = `t-${sentenceIdx}`;
-    if (tokenId === correctId) {
+    const token = tokens.find((t) => t.id === tokenId);
+    const isCorrectToken = token?.text === items[sentenceIdx].arabic_word;
+    if (isCorrectToken) {
       const next = { ...placements, [sentenceIdx]: tokenId };
       setPlacements(next);
-      const allCorrect = items.every((_, i) => next[i] === `t-${i}`);
+      const allCorrect = items.every((item, i) => {
+        const placed = tokens.find((t) => t.id === next[i]);
+        return placed?.text === item.arabic_word;
+      });
       if (allCorrect && !done) {
         setDone(true);
         const grade: Grade =
@@ -130,13 +147,10 @@ export function Stage2Context({
         {items.map((s, i) => {
           const placedId = placements[i];
           const placedToken = tokens.find((t) => t.id === placedId);
-          const isCorrect = placedId === `t-${i}`;
+          const isCorrect = placedToken?.text === s.arabic_word;
           return (
             <li key={i} className="rounded-xl border border-border bg-card p-4">
-              <div
-                className="arabic-quran text-right text-xl leading-loose"
-                dir="rtl"
-              >
+              <div className="arabic-quran text-right text-xl leading-loose" dir="rtl">
                 {s.sentence_before}{" "}
                 <span
                   id={`drop-${i}`}

@@ -38,7 +38,11 @@ interface DialogueWord {
 const verseExamplesCache = new Map<string, Promise<VerseExamplesData> | VerseExamplesData>();
 const dialogueCache = new Map<string, Promise<DialogueData> | DialogueData>();
 
-function readThroughCache<T>(cache: Map<string, Promise<T> | T>, key: string, load: () => Promise<T>) {
+function readThroughCache<T>(
+  cache: Map<string, Promise<T> | T>,
+  key: string,
+  load: () => Promise<T>,
+) {
   const cached = cache.get(key);
   if (cached) return Promise.resolve(cached);
 
@@ -65,9 +69,9 @@ export function readVerseExamplesCache(key: string, load: () => Promise<VerseExa
   return readThroughCache(verseExamplesCache, key, load);
 }
 
-export function dialogueKey(words: DialogueWord[], deckName?: string) {
+export function dialogueKey(words: DialogueWord[], deckName?: string, difficulty = 3) {
   const wordKey = words.map((word) => `${word.arabic.trim()}=${word.meaning.trim()}`).join("|");
-  return `${deckName?.trim() ?? ""}::${wordKey}`;
+  return `${deckName?.trim() ?? ""}::difficulty=${difficulty}::${wordKey}`;
 }
 
 export function readDialogueCache(key: string, load: () => Promise<DialogueData>) {

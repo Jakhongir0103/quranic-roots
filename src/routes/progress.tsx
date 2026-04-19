@@ -319,11 +319,11 @@ function ProgressPage() {
               const w = wordById.get(r.wordId);
               return (
                 <li key={r.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
-                  <div className="min-w-0">
-                    <div className="arabic-quran text-base" dir="rtl">
+                  <div className="min-w-0 flex-1">
+                    <div className="arabic-quran text-right text-base" dir="rtl">
                       {w?.arabic ?? "—"}
                     </div>
-                    <div className="truncate text-xs text-muted-foreground">
+                    <div className="truncate text-left text-xs text-muted-foreground" dir="ltr">
                       {w?.meaning ?? ""} · stage {r.stage}
                     </div>
                   </div>

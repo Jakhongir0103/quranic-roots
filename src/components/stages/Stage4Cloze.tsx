@@ -67,9 +67,23 @@ export function Stage4Cloze({
   const incorrectIdx = data.sentences.findIndex((s) => !s.is_correct);
 
   const submit = async () => {
-    if (pickedIdx === null || !explanation.trim()) return;
+    if (pickedIdx === null) return;
     setGrading(true);
+    const pickedCorrectSentence = pickedIdx === incorrectIdx;
+    const fallbackFeedback = pickedCorrectSentence
+      ? {
+          grade: "adequate" as const,
+          feedback: "Selection recorded. Add an explanation next time for a stronger review.",
+        }
+      : {
+          grade: "weak" as const,
+          feedback: "That was not the misused sentence.",
+        };
     try {
+      if (incorrectIdx < 0 || !explanation.trim()) {
+        setResult(fallbackFeedback);
+        return;
+      }
       const r = await grade({
         data: {
           targetWord: data.target_word,
@@ -77,7 +91,7 @@ export function Stage4Cloze({
           incorrectSentence: data.sentences[incorrectIdx].arabic,
           groundTruthIssue: data.issue,
           userExplanation: explanation.trim(),
-          pickedCorrectSentence: pickedIdx === incorrectIdx,
+          pickedCorrectSentence,
         },
       });
       setResult(r);
@@ -165,7 +179,7 @@ export function Stage4Cloze({
       <Textarea
         value={explanation}
         onChange={(e) => setExplanation(e.target.value)}
-        placeholder="Explain in English what's wrong with the misused sentence."
+        placeholder="Optional: explain in English what's wrong with the misused sentence."
         className="min-h-[120px]"
         disabled={!!result}
       />
@@ -183,7 +197,7 @@ export function Stage4Cloze({
       {!result ? (
         <Button
           onClick={submit}
-          disabled={pickedIdx === null || !explanation.trim() || grading}
+          disabled={pickedIdx === null || grading}
           className="w-full"
           size="lg"
         >

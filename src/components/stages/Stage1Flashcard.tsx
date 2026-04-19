@@ -56,7 +56,10 @@ export function Stage1Flashcard({
           {/* Front: Arabic only */}
           <div className="flip-face flex flex-col items-center justify-center rounded-3xl border border-border bg-card p-8 shadow-sm">
             <div className="flex min-h-40 items-center justify-center">
-              <div className="arabic-quran text-center text-6xl leading-[2.3] text-foreground sm:text-7xl" dir="rtl">
+              <div
+                className="arabic-quran text-center text-6xl leading-[2.3] text-foreground sm:text-7xl"
+                dir="rtl"
+              >
                 {word.arabic}
               </div>
             </div>
@@ -71,12 +74,6 @@ export function Stage1Flashcard({
             <div className="mt-2 text-xs uppercase tracking-wider text-muted-foreground">
               {word.partOfSpeech}
             </div>
-            {word.usageNote && (
-              <p className="mt-4 max-w-sm text-sm text-foreground/80">{word.usageNote}</p>
-            )}
-            {word.frequencyNote && (
-              <p className="mt-3 text-xs text-muted-foreground">{word.frequencyNote}</p>
-            )}
           </div>
         </div>
       </div>

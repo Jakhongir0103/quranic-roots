@@ -27,14 +27,16 @@ const colorMap: Record<string, string> = {
 
 export function Stage5Interrogation({
   words,
+  difficulty = 3,
   onComplete,
 }: {
   words: Word[];
+  difficulty?: number;
   onComplete: (grade: Grade) => void;
 }) {
   const nextTurn = useServerFn(generateConversationTurn);
   const grade = useServerFn(gradeConversationReply);
-  const maxTurns = Math.max(words.length, 5);
+  const maxTurns = Math.max(words.length, difficulty <= 2 ? 4 : difficulty >= 4 ? 7 : 5);
 
   const [turns, setTurns] = useState<Turn[]>([]);
   const [loadingAi, setLoadingAi] = useState(true);
@@ -71,9 +73,7 @@ export function Stage5Interrogation({
     (async () => {
       setLoadingAi(true);
       try {
-        const remaining = wordPayload
-          .map((w) => w.arabic)
-          .filter((a) => !usedWords.has(a));
+        const remaining = wordPayload.map((w) => w.arabic).filter((a) => !usedWords.has(a));
         const aiTurnsCount = turns.filter((t) => t.role === "ai").length;
         const r = await nextTurn({
           data: {
@@ -82,6 +82,7 @@ export function Stage5Interrogation({
             history: turns.map((t) => ({ role: t.role, arabic: t.arabic })),
             turnNumber: aiTurnsCount,
             maxTurns,
+            difficulty,
           },
         });
         setTurns((prev) => [
@@ -104,7 +105,7 @@ export function Stage5Interrogation({
         requested.current = false;
       }
     })();
-  }, [turns, done, error, nextTurn, wordPayload, usedWords, maxTurns, speakArabic]);
+  }, [turns, done, error, nextTurn, wordPayload, usedWords, maxTurns, difficulty, speakArabic]);
 
   const finalize = (allScores: ("strong" | "adequate" | "weak")[]) => {
     if (allScores.length === 0) return onComplete("weak");
@@ -227,9 +228,7 @@ export function Stage5Interrogation({
               <div className={`mt-2 rounded-lg border p-2 text-xs ${colorMap[t.grade]}`} dir="rtl">
                 <span className="arabic font-semibold">{t.feedback}</span>
                 {t.matched_word ? (
-                  <span className="arabic-quran ml-2 text-foreground/80">
-                    · {t.matched_word}
-                  </span>
+                  <span className="arabic-quran ml-2 text-foreground/80">· {t.matched_word}</span>
                 ) : null}
               </div>
             )}
@@ -277,12 +276,22 @@ export function Stage5Interrogation({
                   : "Speak reply"}
             </Button>
             {isRecording && (
-              <Button type="button" variant="outline" onClick={cancelRecording} className="rounded-xl">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={cancelRecording}
+                className="rounded-xl"
+              >
                 Cancel
               </Button>
             )}
           </div>
-          <Button onClick={submitReply} disabled={!reply.trim() || isTranscribing} className="w-full" size="lg">
+          <Button
+            onClick={submitReply}
+            disabled={!reply.trim() || isTranscribing}
+            className="w-full"
+            size="lg"
+          >
             إرسال الرد
           </Button>
         </div>

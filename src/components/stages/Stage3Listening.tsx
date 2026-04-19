@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Word } from "@/lib/db";
 import { useServerFn } from "@tanstack/react-start";
 import { generateDeckDialogue } from "@/lib/ai.functions";
@@ -9,19 +9,11 @@ import { Button } from "@/components/ui/button";
 import { useArabicTts } from "@/hooks/useArabicTts";
 import { dialogueKey, readDialogueCache, type DialogueData } from "@/lib/ai-preload";
 
-/** Highlight any deck-word occurrences inside an Arabic line. */
-function HighlightedArabic({
-  text,
-  targets,
-}: {
-  text: string;
-  targets: string[];
-}) {
+/** Bold any deck-word occurrences inside an Arabic line. */
+function EmphasizedArabic({ text, targets }: { text: string; targets: string[] }) {
   if (targets.length === 0) return <>{text}</>;
   // Build a regex that matches any of the target words. Escape special chars.
-  const escaped = targets
-    .filter(Boolean)
-    .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const escaped = targets.filter(Boolean).map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   if (escaped.length === 0) return <>{text}</>;
   const re = new RegExp(`(${escaped.join("|")})`, "g");
   const parts = text.split(re);
@@ -29,9 +21,9 @@ function HighlightedArabic({
     <>
       {parts.map((p, i) =>
         targets.includes(p) ? (
-          <span key={i} className="rounded bg-warning/35 px-1 text-black">
+          <strong key={i} className="font-bold text-foreground">
             {p}
-          </span>
+          </strong>
         ) : (
           <span key={i}>{p}</span>
         ),
@@ -43,10 +35,12 @@ function HighlightedArabic({
 export function Stage3Listening({
   words,
   deckName,
+  difficulty = 3,
   onComplete,
 }: {
   words: Word[];
   deckName?: string;
+  difficulty?: number;
   onComplete: (grade: Grade) => void;
 }) {
   const generate = useServerFn(generateDeckDialogue);
@@ -59,22 +53,31 @@ export function Stage3Listening({
   const [qScore, setQScore] = useState(0);
   const [qPicked, setQPicked] = useState<number | null>(null);
   const { speakArabic, speakArabicLines } = useArabicTts();
+  const spokeInitialLine = useRef(false);
 
   const targetForms = useMemo(() => words.map((w) => w.arabic), [words]);
   const wordPayload = useMemo(
     () => words.map((w) => ({ arabic: w.arabic, meaning: w.meaning })),
     [words],
   );
-  const preloadKey = useMemo(() => dialogueKey(wordPayload, deckName), [wordPayload, deckName]);
+  const preloadKey = useMemo(
+    () => dialogueKey(wordPayload, deckName, difficulty),
+    [wordPayload, deckName, difficulty],
+  );
 
   useEffect(() => {
     let alive = true;
     setData(null);
     setError(null);
+    spokeInitialLine.current = false;
     (async () => {
       try {
-        const r = await readDialogueCache(preloadKey, () =>
-          generate({ data: { words: wordPayload, deckName } }) as Promise<DialogueData>,
+        const r = await readDialogueCache(
+          preloadKey,
+          () =>
+            generate({
+              data: { words: wordPayload, deckName, difficulty },
+            }) as Promise<DialogueData>,
         );
         if (!alive) return;
         setData(r);
@@ -86,7 +89,13 @@ export function Stage3Listening({
     return () => {
       alive = false;
     };
-  }, [generate, preloadKey, wordPayload, deckName]);
+  }, [generate, preloadKey, wordPayload, deckName, difficulty]);
+
+  useEffect(() => {
+    if (!data || spokeInitialLine.current) return;
+    spokeInitialLine.current = true;
+    void speakArabic(data.exchanges[0]?.arabic ?? "");
+  }, [data, speakArabic]);
 
   if (error) {
     return (
@@ -107,7 +116,6 @@ export function Stage3Listening({
 
   const revealNext = () => {
     const next = revealed + 1;
-    void speakArabic(data.exchanges[revealed].arabic);
     if (revealed === data.pause_after_index) {
       setPhase("choice");
       return;
@@ -117,6 +125,7 @@ export function Stage3Listening({
       return;
     }
     setRevealed(next);
+    void speakArabic(data.exchanges[next].arabic);
   };
 
   const pickChoice = (i: number) => {
@@ -131,6 +140,7 @@ export function Stage3Listening({
     } else {
       setRevealed(next);
       setPhase("dialogue");
+      void speakArabic(data.exchanges[next].arabic);
     }
   };
 
@@ -175,7 +185,7 @@ export function Stage3Listening({
             </button>
           </div>
           <div className="arabic-quran text-right text-lg leading-loose" dir="rtl">
-            <HighlightedArabic text={ex.arabic} targets={targetForms} />
+            <EmphasizedArabic text={ex.arabic} targets={targetForms} />
           </div>
           <div className="mt-1 text-xs text-muted-foreground">{ex.translation}</div>
         </li>
@@ -229,7 +239,7 @@ export function Stage3Listening({
               dir="rtl"
             >
               <div className="arabic-quran text-lg">
-                <HighlightedArabic text={opt} targets={targetForms} />
+                <EmphasizedArabic text={opt} targets={targetForms} />
               </div>
             </button>
           ))}
@@ -251,7 +261,7 @@ export function Stage3Listening({
               <>
                 <div>Better answer:</div>
                 <div className="arabic-quran mt-1 text-right text-lg" dir="rtl">
-                  <HighlightedArabic
+                  <EmphasizedArabic
                     text={data.choice_options_arabic[data.correct_choice_index]}
                     targets={targetForms}
                   />
