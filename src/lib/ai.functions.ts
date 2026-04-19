@@ -4,11 +4,14 @@ import { z } from "zod";
 const GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const DEFAULT_MODEL = "google/gemini-3-flash-preview";
 
-async function callGemini(opts: {
-  system: string;
-  user: string;
-  tool?: { name: string; description: string; parameters: unknown };
-}) {
+async function callGeminiOnce(
+  opts: {
+    system: string;
+    user: string;
+    tool?: { name: string; description: string; parameters: unknown };
+  },
+  signal: AbortSignal,
+) {
   const apiKey = process.env.LOVABLE_API_KEY;
   if (!apiKey) throw new Error("LOVABLE_API_KEY is not configured");
 
@@ -41,6 +44,7 @@ async function callGemini(opts: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
+    signal,
   });
 
   if (res.status === 429) throw new Error("RATE_LIMIT");
@@ -59,6 +63,34 @@ async function callGemini(opts: {
     return JSON.parse(args);
   }
   return choice?.content ?? "";
+}
+
+async function callGemini(opts: {
+  system: string;
+  user: string;
+  tool?: { name: string; description: string; parameters: unknown };
+}) {
+  // Single retry with a per-attempt timeout — protects against transient
+  // "fetch failed" / upstream timeout errors that otherwise blank the screen.
+  const ATTEMPTS = 2;
+  const TIMEOUT_MS = 45_000;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), TIMEOUT_MS);
+    try {
+      return await callGeminiOnce(opts, ac.signal);
+    } catch (e) {
+      lastErr = e;
+      const msg = (e as Error)?.message ?? "";
+      // Don't retry user-actionable errors
+      if (msg === "RATE_LIMIT" || msg === "CREDITS") throw e;
+      console.warn(`Gemini call failed (attempt ${attempt + 1}/${ATTEMPTS})`, msg);
+    } finally {
+      clearTimeout(t);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("AI_ERROR");
 }
 
 /* ============================================================
