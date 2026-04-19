@@ -34,6 +34,7 @@ function StudySession() {
   const [done, setDone] = useState(false);
   const [demoMode, setDemoMode] = useState(true);
   const [demoStage, setDemoStage] = useState(1);
+  const [scheduledStage, setScheduledStage] = useState<number | null>(null);
   const difficulty = 3;
   // For deck-level stages, we cycle through one word per "iteration" of stages 4 (per-word misuse).
   const [perWordIndex, setPerWordIndex] = useState(0);
@@ -43,6 +44,7 @@ function StudySession() {
       const d = await db.decks.get(id);
       setDeck(d ?? null);
       if (demoMode) {
+        setScheduledStage(null);
         const batches = await db.batches.where({ deckId: id }).toArray();
         const unlockedWordIds = batches.filter((b) => b.unlocked).flatMap((b) => b.wordIds);
         const words = (await db.words.bulkGet(unlockedWordIds)).filter(Boolean) as Word[];
@@ -53,30 +55,30 @@ function StudySession() {
       const due = await buildDueQueue();
       const forDeck = due.filter((d) => d.word.deckId === id);
       if (forDeck.length === 0) {
+        setScheduledStage(null);
         setBatchWords([]);
         return;
       }
-      // Group by batch; take first batch with any due items
-      const byBatch = new Map<number, Word[]>();
-      for (const item of forDeck) {
-        const arr = byBatch.get(item.word.batchNumber) ?? [];
-        arr.push(item.word);
-        byBatch.set(item.word.batchNumber, arr);
-      }
-      const firstBatch = [...byBatch.keys()].sort((a, b) => a - b)[0];
-      // Always use ALL words from that batch for deck-wide stages
-      const allInBatch = await db.words.where({ deckId: id, batchNumber: firstBatch }).toArray();
-      setBatchWords(allInBatch);
+      const next = forDeck[0];
+      setScheduledStage(next.row.stage);
+      const scheduledWords = forDeck
+        .filter(
+          (item) =>
+            item.row.stage === next.row.stage &&
+            item.word.batchNumber === next.word.batchNumber,
+        )
+        .map((item) => item.word);
+      setBatchWords(scheduledWords);
     })();
   }, [id, demoMode]);
+
+  const activeStage = demoMode ? demoStage : scheduledStage ?? 1;
 
   // Reset per-stage cursors when stage changes
   useEffect(() => {
     setStage1Index(0);
     setPerWordIndex(0);
-  }, [demoStage, demoMode]);
-
-  const activeStage = demoStage; // demo mode is the only flow surfaced for now
+  }, [activeStage, demoMode]);
 
   const currentStage1Word = useMemo(
     () =>
@@ -252,35 +254,47 @@ function StudySession() {
             <Sparkles className="h-3.5 w-3.5" />
             <span className="font-medium uppercase tracking-wider">Demo mode</span>
             <button
-              onClick={() => setDemoMode((d) => !d)}
+              onClick={() => {
+                setDemoMode((d) => !d);
+                setDone(false);
+                setCompleted(0);
+              }}
               className="ml-1 rounded-md border border-border px-2 py-0.5 text-[10px] hover:bg-secondary"
             >
               {demoMode ? "On" : "Off"}
             </button>
           </div>
-          <div className="flex gap-1">
-            {[1, 2, 3, 4, 5].map((s) => (
-              <button
-                key={s}
-                onClick={() => {
-                  setDemoStage(s);
-                  setDone(false);
-                  setCompleted(0);
-                }}
-                className={`h-7 w-7 rounded-md text-xs font-medium tabular-nums transition-colors ${
-                  demoStage === s
-                    ? "bg-foreground text-background"
-                    : "border border-border text-muted-foreground hover:bg-secondary"
-                }`}
-                title={`Stage ${s}`}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
+          {demoMode ? (
+            <div className="flex gap-1">
+              {[1, 2, 3, 4, 5].map((s) => (
+                <button
+                  key={s}
+                  onClick={() => {
+                    setDemoStage(s);
+                    setDone(false);
+                    setCompleted(0);
+                  }}
+                  className={`h-7 w-7 rounded-md text-xs font-medium tabular-nums transition-colors ${
+                    demoStage === s
+                      ? "bg-foreground text-background"
+                      : "border border-border text-muted-foreground hover:bg-secondary"
+                  }`}
+                  title={`Stage ${s}`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <span className="rounded-md border border-border px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+              Scheduled stage {activeStage}
+            </span>
+          )}
         </div>
         <p className="mt-2 text-[11px] text-muted-foreground">
-          Stages 2, 3, and 5 use the whole batch in one session. Stages 1 and 4 cycle word by word.
+          {demoMode
+            ? "Stages 2, 3, and 5 use the whole batch in one session. Stages 1 and 4 cycle word by word."
+            : "Demo mode is off, so reviews follow the spaced repetition schedule and only due stages are available."}
         </p>
       </div>
 

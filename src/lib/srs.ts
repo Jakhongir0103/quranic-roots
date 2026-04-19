@@ -97,7 +97,7 @@ export async function applyStageOutcome(wordId: number, stage: number, grade: Gr
     }
   }
 
-  wordStage.currentStage = Math.max(wordStage.currentStage, nextStage);
+  wordStage.currentStage = nextStage;
   wordStage.stageHistory.push({ stage, at: now, grade });
   wordStage.lastUpdated = now;
   await db.wordStages.put(wordStage);
@@ -141,6 +141,9 @@ export async function checkBatchUnlock(wordId: number) {
       .first();
     if (next) {
       await db.batches.update(next.id!, { unlocked: true });
+      for (const nextWordId of next.wordIds) {
+        await scheduleStage(nextWordId, 1, 0);
+      }
     }
   }
 }
@@ -153,6 +156,9 @@ export async function buildDueQueue(now = Date.now()) {
   const words = await db.words.bulkGet(wordIds);
   const wordMap = new Map<number, Word>();
   words.forEach((w) => w && wordMap.set(w.id!, w));
+  const wordStages = await db.wordStages.bulkGet(wordIds);
+  const stageMap = new Map<number, number>();
+  wordStages.forEach((s) => s && stageMap.set(s.wordId, s.currentStage));
 
   const batchKeys = [...new Set(words.filter(Boolean).map((w) => `${w!.deckId}:${w!.batchNumber}`))];
   const batchMap = new Map<string, boolean>();
@@ -166,6 +172,10 @@ export async function buildDueQueue(now = Date.now()) {
     .filter((row) => {
       const w = wordMap.get(row.wordId);
       if (!w) return false;
+      const currentStage = stageMap.get(row.wordId) ?? 0;
+      const isCurrentStageReview = currentStage === row.stage;
+      const isFirstExposure = currentStage === 0 && row.stage === 1;
+      if (!isCurrentStageReview && !isFirstExposure) return false;
       return batchMap.get(`${w.deckId}:${w.batchNumber}`);
     })
     .sort((a, b) => a.dueDate - b.dueDate)
