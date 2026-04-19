@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Word } from "@/lib/db";
 import { Button } from "@/components/ui/button";
 import type { Grade } from "@/lib/srs";
@@ -6,12 +6,7 @@ import { StageBadge } from "../StageBadge";
 import { useServerFn } from "@tanstack/react-start";
 import { generateVerseExamples } from "@/lib/ai.functions";
 import { Loader2 } from "lucide-react";
-
-interface Verse {
-  arabic: string;
-  reference: string;
-  translation: string;
-}
+import { readVerseExamplesCache, verseExamplesKey, type VerseExample } from "@/lib/ai-preload";
 
 export function Stage1Flashcard({
   word,
@@ -22,16 +17,23 @@ export function Stage1Flashcard({
 }) {
   const [flipped, setFlipped] = useState(false);
   const fetchVerses = useServerFn(generateVerseExamples);
-  const [verses, setVerses] = useState<Verse[] | null>(null);
+  const [verses, setVerses] = useState<VerseExample[] | null>(null);
   const [versesError, setVersesError] = useState(false);
+  const preloadKey = useMemo(
+    () => verseExamplesKey(word.arabic, word.meaning),
+    [word.arabic, word.meaning],
+  );
 
-  // Lazy-load verses only after the user reveals the meaning
+  // Start fetching as soon as the card appears so the reveal usually feels instant.
   useEffect(() => {
-    if (!flipped || verses || versesError) return;
     let alive = true;
+    setVerses(null);
+    setVersesError(false);
     (async () => {
       try {
-        const r = await fetchVerses({ data: { arabic: word.arabic, meaning: word.meaning } });
+        const r = await readVerseExamplesCache(preloadKey, () =>
+          fetchVerses({ data: { arabic: word.arabic, meaning: word.meaning } }),
+        );
         if (alive) setVerses(r.verses);
       } catch (e) {
         console.error(e);
@@ -41,7 +43,7 @@ export function Stage1Flashcard({
     return () => {
       alive = false;
     };
-  }, [flipped, fetchVerses, word.arabic, word.meaning, verses, versesError]);
+  }, [fetchVerses, preloadKey, word.arabic, word.meaning]);
 
   return (
     <div className="space-y-6">

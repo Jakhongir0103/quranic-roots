@@ -1,7 +1,10 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
 import { db, type Word, type Deck } from "@/lib/db";
 import { applyStageOutcome, buildDueQueue, logInteraction, type Grade } from "@/lib/srs";
+import { generateDeckDialogue } from "@/lib/ai.functions";
+import { dialogueKey, readDialogueCache, type DialogueData } from "@/lib/ai-preload";
 import { Stage1Flashcard } from "@/components/stages/Stage1Flashcard";
 import { Stage2Context } from "@/components/stages/Stage2Context";
 import { Stage3Listening } from "@/components/stages/Stage3Listening";
@@ -24,6 +27,7 @@ function StudySession() {
   const { deckId } = Route.useParams();
   const id = Number(deckId);
   const navigate = useNavigate();
+  const generateDialogue = useServerFn(generateDeckDialogue);
 
   const [deck, setDeck] = useState<Deck | null>(null);
   const [batchWords, setBatchWords] = useState<Word[] | null>(null);
@@ -86,6 +90,25 @@ function StudySession() {
     () => (batchWords && batchWords.length > 0 ? batchWords[perWordIndex % batchWords.length] : null),
     [batchWords, perWordIndex],
   );
+  const dialoguePayload = useMemo(
+    () => batchWords?.map((w) => ({ arabic: w.arabic, meaning: w.meaning })) ?? [],
+    [batchWords],
+  );
+
+  // Opportunistically warm Stage 3 while the learner is in earlier stages.
+  useEffect(() => {
+    if (dialoguePayload.length === 0) return;
+    const key = dialogueKey(dialoguePayload, deck?.name);
+    void readDialogueCache(
+      key,
+      () =>
+        generateDialogue({
+          data: { words: dialoguePayload, deckName: deck?.name },
+        }) as Promise<DialogueData>,
+    ).catch((error) => {
+      console.warn("Dialogue preload failed", error);
+    });
+  }, [dialoguePayload, deck?.name, generateDialogue]);
 
   if (batchWords === null) {
     return <div className="text-muted-foreground">Loading session…</div>;

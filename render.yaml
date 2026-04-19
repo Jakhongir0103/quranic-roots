@@ -18,3 +18,7 @@ services:
         value: ar-XA
       - key: GOOGLE_TTS_VOICE
         value: ar-XA-Wavenet-B
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_STT_MODEL
+        value: whisper-1

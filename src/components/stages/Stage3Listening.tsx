@@ -7,28 +7,7 @@ import { StageBadge } from "../StageBadge";
 import { Loader2, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useArabicTts } from "@/hooks/useArabicTts";
-
-interface Exchange {
-  speaker: "A" | "B";
-  arabic: string;
-  translation: string;
-}
-
-interface DialogueData {
-  topic: string;
-  exchanges: Exchange[];
-  pause_after_index: number;
-  choice_options_arabic: string[];
-  choice_options_translation: string[];
-  correct_choice_index: number;
-  questions: {
-    kind: "meaning" | "role";
-    target_word: string;
-    question: string;
-    options: string[];
-    correct_index: number;
-  }[];
-}
+import { dialogueKey, readDialogueCache, type DialogueData } from "@/lib/ai-preload";
 
 /** Highlight any deck-word occurrences inside an Arabic line. */
 function HighlightedArabic({
@@ -86,14 +65,17 @@ export function Stage3Listening({
     () => words.map((w) => ({ arabic: w.arabic, meaning: w.meaning })),
     [words],
   );
+  const preloadKey = useMemo(() => dialogueKey(wordPayload, deckName), [wordPayload, deckName]);
 
   useEffect(() => {
     let alive = true;
+    setData(null);
+    setError(null);
     (async () => {
       try {
-        const r = (await generate({
-          data: { words: wordPayload, deckName },
-        })) as DialogueData;
+        const r = await readDialogueCache(preloadKey, () =>
+          generate({ data: { words: wordPayload, deckName } }) as Promise<DialogueData>,
+        );
         if (!alive) return;
         setData(r);
       } catch (e) {
@@ -104,7 +86,7 @@ export function Stage3Listening({
     return () => {
       alive = false;
     };
-  }, [generate, wordPayload, deckName]);
+  }, [generate, preloadKey, wordPayload, deckName]);
 
   if (error) {
     return (

@@ -4,10 +4,11 @@ import { useServerFn } from "@tanstack/react-start";
 import { generateConversationTurn, gradeConversationReply } from "@/lib/ai.functions";
 import type { Grade } from "@/lib/srs";
 import { StageBadge } from "../StageBadge";
-import { Loader2, Volume2 } from "lucide-react";
+import { Loader2, Mic, Square, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useArabicTts } from "@/hooks/useArabicTts";
+import { useSpeechToText } from "@/hooks/useSpeechToText";
 
 interface Turn {
   role: "ai" | "user";
@@ -45,6 +46,14 @@ export function Stage5Interrogation({
   const [scores, setScores] = useState<("strong" | "adequate" | "weak")[]>([]);
   const requested = useRef(false);
   const { speakArabic } = useArabicTts();
+  const {
+    isRecording,
+    isTranscribing,
+    speechError,
+    startRecording,
+    stopAndTranscribe,
+    cancelRecording,
+  } = useSpeechToText();
 
   const wordPayload = useMemo(
     () => words.map((w) => ({ arabic: w.arabic, meaning: w.meaning })),
@@ -156,6 +165,18 @@ export function Stage5Interrogation({
     }
   };
 
+  const toggleSpeechInput = async () => {
+    if (isRecording) {
+      const transcript = await stopAndTranscribe();
+      if (transcript) {
+        setReply((current) => (current.trim() ? `${current.trim()} ${transcript}` : transcript));
+      }
+      return;
+    }
+
+    await startRecording();
+  };
+
   if (error) {
     return (
       <div className="space-y-4 text-center">
@@ -231,9 +252,37 @@ export function Stage5Interrogation({
             placeholder="اكتب ردك بالعربية…"
             className="arabic min-h-[100px] text-right text-lg"
             dir="rtl"
-            disabled={grading}
+            disabled={grading || isTranscribing}
           />
-          <Button onClick={submitReply} disabled={!reply.trim()} className="w-full" size="lg">
+          {speechError && <p className="text-xs text-destructive">{speechError}</p>}
+          <div className="grid grid-cols-[1fr_auto] gap-2">
+            <Button
+              type="button"
+              variant={isRecording ? "destructive" : "secondary"}
+              onClick={toggleSpeechInput}
+              disabled={isTranscribing}
+              className="rounded-xl"
+            >
+              {isTranscribing ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : isRecording ? (
+                <Square className="mr-2 h-4 w-4" />
+              ) : (
+                <Mic className="mr-2 h-4 w-4" />
+              )}
+              {isTranscribing
+                ? "Transcribing..."
+                : isRecording
+                  ? "Stop and transcribe"
+                  : "Speak reply"}
+            </Button>
+            {isRecording && (
+              <Button type="button" variant="outline" onClick={cancelRecording} className="rounded-xl">
+                Cancel
+              </Button>
+            )}
+          </div>
+          <Button onClick={submitReply} disabled={!reply.trim() || isTranscribing} className="w-full" size="lg">
             إرسال الرد
           </Button>
         </div>
