@@ -1,8 +1,13 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
-const GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
-const DEFAULT_MODEL = "google/gemini-3-flash-preview";
+const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3-flash-preview";
+const FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-3-flash-preview"];
+
+function getModelCandidates() {
+  return [...new Set([DEFAULT_MODEL, ...FALLBACK_MODELS].filter(Boolean))];
+}
 
 async function callGeminiOnce(
   opts: {
@@ -10,59 +15,78 @@ async function callGeminiOnce(
     user: string;
     tool?: { name: string; description: string; parameters: unknown };
   },
+  model: string,
   signal: AbortSignal,
 ) {
-  const apiKey = process.env.LOVABLE_API_KEY;
-  if (!apiKey) throw new Error("LOVABLE_API_KEY is not configured");
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GEMINI_API_KEY is not configured");
 
   const body: Record<string, unknown> = {
-    model: DEFAULT_MODEL,
-    messages: [
-      { role: "system", content: opts.system },
-      { role: "user", content: opts.user },
+    systemInstruction: {
+      parts: [{ text: opts.system }],
+    },
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: opts.user }],
+      },
     ],
   };
 
   if (opts.tool) {
     body.tools = [
       {
-        type: "function",
-        function: {
-          name: opts.tool.name,
-          description: opts.tool.description,
-          parameters: opts.tool.parameters,
-        },
+        functionDeclarations: [
+          {
+            name: opts.tool.name,
+            description: opts.tool.description,
+            parameters: opts.tool.parameters,
+          },
+        ],
       },
     ];
-    body.tool_choice = { type: "function", function: { name: opts.tool.name } };
+    body.toolConfig = {
+      functionCallingConfig: {
+        mode: "ANY",
+        allowedFunctionNames: [opts.tool.name],
+      },
+    };
   }
 
-  const res = await fetch(GATEWAY_URL, {
+  const res = await fetch(`${GEMINI_API_BASE}/models/${model}:generateContent`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      "x-goog-api-key": apiKey,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
     signal,
   });
 
-  if (res.status === 429) throw new Error("RATE_LIMIT");
-  if (res.status === 402) throw new Error("CREDITS");
+  if (res.status === 429) throw new Error(`RATE_LIMIT:${model}`);
+  if (res.status === 401 || res.status === 403) throw new Error("AUTH");
   if (!res.ok) {
     const t = await res.text();
-    console.error("AI gateway error", res.status, t);
+    console.error("Gemini API error", res.status, t);
     throw new Error("AI_ERROR");
   }
 
   const data = await res.json();
-  const choice = data.choices?.[0]?.message;
+  const parts = data.candidates?.[0]?.content?.parts ?? [];
+
   if (opts.tool) {
-    const args = choice?.tool_calls?.[0]?.function?.arguments;
-    if (!args) throw new Error("NO_TOOL_RESPONSE");
-    return JSON.parse(args);
+    const functionCall = parts.find((part: { functionCall?: unknown }) => part.functionCall)
+      ?.functionCall as { name?: string; args?: unknown } | undefined;
+    if (!functionCall?.args || functionCall.name !== opts.tool.name) {
+      throw new Error("NO_TOOL_RESPONSE");
+    }
+    return functionCall.args;
   }
-  return choice?.content ?? "";
+
+  return parts
+    .map((part: { text?: string }) => part.text)
+    .filter(Boolean)
+    .join("");
 }
 
 async function callGemini(opts: {
@@ -74,22 +98,41 @@ async function callGemini(opts: {
   // "fetch failed" / upstream timeout errors that otherwise blank the screen.
   const ATTEMPTS = 2;
   const TIMEOUT_MS = 45_000;
+  const modelCandidates = getModelCandidates();
   let lastErr: unknown;
-  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), TIMEOUT_MS);
-    try {
-      return await callGeminiOnce(opts, ac.signal);
-    } catch (e) {
-      lastErr = e;
-      const msg = (e as Error)?.message ?? "";
-      // Don't retry user-actionable errors
-      if (msg === "RATE_LIMIT" || msg === "CREDITS") throw e;
-      console.warn(`Gemini call failed (attempt ${attempt + 1}/${ATTEMPTS})`, msg);
-    } finally {
-      clearTimeout(t);
+  let sawRateLimit = false;
+
+  for (const model of modelCandidates) {
+    for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+      const ac = new AbortController();
+      const t = setTimeout(() => ac.abort(), TIMEOUT_MS);
+      try {
+        return await callGeminiOnce(opts, model, ac.signal);
+      } catch (e) {
+        lastErr = e;
+        const msg = (e as Error)?.message ?? "";
+
+        // Auth errors are user-actionable; don't keep trying.
+        if (msg === "AUTH") throw e;
+
+        // If this model is rate-limited, try the next configured model.
+        if (msg.startsWith("RATE_LIMIT:")) {
+          sawRateLimit = true;
+          console.warn(`Gemini model rate-limited: ${model}`);
+          break;
+        }
+
+        console.warn(
+          `Gemini call failed on ${model} (attempt ${attempt + 1}/${ATTEMPTS})`,
+          msg,
+        );
+      } finally {
+        clearTimeout(t);
+      }
     }
   }
+
+  if (sawRateLimit) throw new Error("RATE_LIMIT");
   throw lastErr instanceof Error ? lastErr : new Error("AI_ERROR");
 }
 
@@ -111,12 +154,10 @@ const versesSchema = {
           translation: { type: "string", description: "Concise English translation" },
         },
         required: ["arabic", "reference", "translation"],
-        additionalProperties: false,
       },
     },
   },
   required: ["verses"],
-  additionalProperties: false,
 };
 
 export const generateVerseExamples = createServerFn({ method: "POST" })
@@ -151,7 +192,7 @@ const deckClozeSchema = {
           translation: { type: "string", description: "English translation with the target shown as ___" },
         },
         required: ["arabic_word", "sentence_before", "sentence_after", "translation"],
-        additionalProperties: false,
+        
       },
     },
     distractor: {
@@ -160,7 +201,7 @@ const deckClozeSchema = {
     },
   },
   required: ["items", "distractor"],
-  additionalProperties: false,
+  
 };
 
 export const generateDeckCloze = createServerFn({ method: "POST" })
@@ -205,7 +246,7 @@ const dialogueSchema = {
           translation: { type: "string" },
         },
         required: ["speaker", "arabic", "translation"],
-        additionalProperties: false,
+        
       },
     },
     pause_after_index: { type: "number", description: "0-based index of a Speaker A line after which the user picks Speaker B's reply" },
@@ -236,7 +277,7 @@ const dialogueSchema = {
           correct_index: { type: "number" },
         },
         required: ["kind", "target_word", "question", "options", "correct_index"],
-        additionalProperties: false,
+        
       },
     },
   },
@@ -249,7 +290,6 @@ const dialogueSchema = {
     "correct_choice_index",
     "questions",
   ],
-  additionalProperties: false,
 };
 
 export const generateDeckDialogue = createServerFn({ method: "POST" })
@@ -317,7 +357,6 @@ const misuseSchema = {
           is_correct: { type: "boolean", description: "true if the target word is used correctly here, false if misused" },
         },
         required: ["arabic", "translation", "is_correct"],
-        additionalProperties: false,
       },
     },
     issue: {
@@ -326,7 +365,6 @@ const misuseSchema = {
     },
   },
   required: ["target_word", "target_meaning", "sentences", "issue"],
-  additionalProperties: false,
 };
 
 export const generateMisusePair = createServerFn({ method: "POST" })
@@ -358,7 +396,6 @@ const misuseGradeSchema = {
     feedback: { type: "string" },
   },
   required: ["grade", "feedback"],
-  additionalProperties: false,
 };
 
 export const gradeMisuseExplanation = createServerFn({ method: "POST" })
@@ -402,7 +439,6 @@ const convoTurnSchema = {
     is_final: { type: "boolean", description: "True if this is the closing line of the conversation" },
   },
   required: ["arabic", "is_final"],
-  additionalProperties: false,
 };
 
 export const generateConversationTurn = createServerFn({ method: "POST" })
@@ -470,7 +506,6 @@ const convoGradeSchema = {
     word_used_correctly: { type: "boolean" },
   },
   required: ["grade", "feedback", "matched_word", "word_used_correctly"],
-  additionalProperties: false,
 };
 
 export const gradeConversationReply = createServerFn({ method: "POST" })
@@ -520,7 +555,6 @@ const validateSchema = {
     usageNote: { type: "string" },
   },
   required: ["valid", "arabic", "meaning", "partOfSpeech", "usageNote"],
-  additionalProperties: false,
 };
 
 export const validateAndEnrichWord = createServerFn({ method: "POST" })
@@ -555,12 +589,10 @@ const promptDeckSchema = {
           usageNote: { type: "string", description: "1 short note about how the word appears in the Quran" },
         },
         required: ["arabic", "meaning", "partOfSpeech", "usageNote"],
-        additionalProperties: false,
       },
     },
   },
   required: ["deckName", "domain", "words"],
-  additionalProperties: false,
 };
 
 export const generateDeckFromPrompt = createServerFn({ method: "POST" })
