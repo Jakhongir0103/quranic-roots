@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Word } from "@/lib/db";
 import { useServerFn } from "@tanstack/react-start";
-import { generateDialogue } from "@/lib/ai.functions";
+import { generateDeckDialogue } from "@/lib/ai.functions";
 import type { Grade } from "@/lib/srs";
 import { StageBadge } from "../StageBadge";
 import { Loader2, Volume2 } from "lucide-react";
@@ -11,15 +11,22 @@ interface Exchange {
   speaker: "A" | "B";
   arabic: string;
   translation: string;
-  uses_target: boolean;
 }
 
 interface DialogueData {
+  topic: string;
   exchanges: Exchange[];
   pause_after_index: number;
-  choice_options: string[];
+  choice_options_arabic: string[];
+  choice_options_translation: string[];
   correct_choice_index: number;
-  comprehension: { question: string; options: string[]; correct_index: number }[];
+  questions: {
+    kind: "meaning" | "role";
+    target_word: string;
+    question: string;
+    options: string[];
+    correct_index: number;
+  }[];
 }
 
 function speak(text: string) {
@@ -31,28 +38,69 @@ function speak(text: string) {
   window.speechSynthesis.speak(utter);
 }
 
+/** Highlight any deck-word occurrences inside an Arabic line. */
+function HighlightedArabic({
+  text,
+  targets,
+}: {
+  text: string;
+  targets: string[];
+}) {
+  if (targets.length === 0) return <>{text}</>;
+  // Build a regex that matches any of the target words. Escape special chars.
+  const escaped = targets
+    .filter(Boolean)
+    .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (escaped.length === 0) return <>{text}</>;
+  const re = new RegExp(`(${escaped.join("|")})`, "g");
+  const parts = text.split(re);
+  return (
+    <>
+      {parts.map((p, i) =>
+        targets.includes(p) ? (
+          <span key={i} className="rounded bg-accent/25 px-1 text-accent-foreground">
+            {p}
+          </span>
+        ) : (
+          <span key={i}>{p}</span>
+        ),
+      )}
+    </>
+  );
+}
+
 export function Stage3Listening({
-  word,
+  words,
+  deckName,
   onComplete,
 }: {
-  word: Word;
+  words: Word[];
+  deckName?: string;
   onComplete: (grade: Grade) => void;
 }) {
-  const generate = useServerFn(generateDialogue);
+  const generate = useServerFn(generateDeckDialogue);
   const [data, setData] = useState<DialogueData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(0);
-  const [phase, setPhase] = useState<"dialogue" | "choice" | "post" | "comprehension">("dialogue");
+  const [phase, setPhase] = useState<"dialogue" | "choice" | "post" | "questions">("dialogue");
   const [choicePicked, setChoicePicked] = useState<number | null>(null);
-  const [compIndex, setCompIndex] = useState(0);
-  const [compScore, setCompScore] = useState(0);
-  const [compPicked, setCompPicked] = useState<number | null>(null);
+  const [qIndex, setQIndex] = useState(0);
+  const [qScore, setQScore] = useState(0);
+  const [qPicked, setQPicked] = useState<number | null>(null);
+
+  const targetForms = useMemo(() => words.map((w) => w.arabic), [words]);
+  const wordPayload = useMemo(
+    () => words.map((w) => ({ arabic: w.arabic, meaning: w.meaning })),
+    [words],
+  );
 
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        const r = (await generate({ data: { arabic: word.arabic, meaning: word.meaning } })) as DialogueData;
+        const r = (await generate({
+          data: { words: wordPayload, deckName },
+        })) as DialogueData;
         if (!alive) return;
         setData(r);
       } catch (e) {
@@ -63,7 +111,7 @@ export function Stage3Listening({
     return () => {
       alive = false;
     };
-  }, [generate, word.arabic, word.meaning]);
+  }, [generate, wordPayload, deckName]);
 
   if (error) {
     return (
@@ -84,14 +132,13 @@ export function Stage3Listening({
 
   const revealNext = () => {
     const next = revealed + 1;
-    const justRevealed = data.exchanges[revealed];
-    speak(justRevealed.arabic);
+    speak(data.exchanges[revealed].arabic);
     if (revealed === data.pause_after_index) {
       setPhase("choice");
       return;
     }
     if (next >= data.exchanges.length) {
-      setPhase("comprehension");
+      setPhase("questions");
       return;
     }
     setRevealed(next);
@@ -103,80 +150,97 @@ export function Stage3Listening({
   };
 
   const continueAfterChoice = () => {
-    setRevealed((r) => r + 1);
-    if (revealed + 1 >= data.exchanges.length) setPhase("comprehension");
-    else setPhase("dialogue");
+    const next = revealed + 1;
+    if (next >= data.exchanges.length) {
+      setPhase("questions");
+    } else {
+      setRevealed(next);
+      setPhase("dialogue");
+    }
   };
 
-  const pickComp = (i: number) => {
-    if (compPicked !== null) return;
-    setCompPicked(i);
-    if (i === data.comprehension[compIndex].correct_index) setCompScore((s) => s + 1);
+  const pickQ = (i: number) => {
+    if (qPicked !== null) return;
+    setQPicked(i);
+    const isCorrect = i === data.questions[qIndex].correct_index;
+    if (isCorrect) setQScore((s) => s + 1);
     setTimeout(() => {
-      if (compIndex + 1 < data.comprehension.length) {
-        setCompIndex(compIndex + 1);
-        setCompPicked(null);
+      if (qIndex + 1 < data.questions.length) {
+        setQIndex(qIndex + 1);
+        setQPicked(null);
       } else {
-        const finalScore =
-          compScore + (i === data.comprehension[compIndex].correct_index ? 1 : 0);
-        const grade: Grade = finalScore === 2 ? "correct" : finalScore === 1 ? "partial" : "struggled";
+        const finalScore = qScore + (isCorrect ? 1 : 0);
+        const ratio = finalScore / data.questions.length;
+        const grade: Grade = ratio >= 0.8 ? "correct" : ratio >= 0.5 ? "partial" : "struggled";
         onComplete(grade);
       }
-    }, 900);
+    }, 950);
   };
+
+  // Dialogue list (always visible while in dialogue/choice/post; also stays during questions)
+  const dialogueList = (
+    <ul className="space-y-2">
+      {data.exchanges.slice(0, Math.min(revealed + 1, data.exchanges.length)).map((ex, i) => (
+        <li
+          key={i}
+          className={`rounded-xl border border-border p-3 ${
+            ex.speaker === "A" ? "bg-card" : "bg-surface"
+          }`}
+        >
+          <div className="mb-1 flex items-center gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Speaker {ex.speaker}
+            </span>
+            <button
+              onClick={() => speak(ex.arabic)}
+              className="text-muted-foreground hover:text-foreground"
+              aria-label="Play line"
+            >
+              <Volume2 className="h-3 w-3" />
+            </button>
+          </div>
+          <div className="arabic-quran text-right text-lg leading-loose" dir="rtl">
+            <HighlightedArabic text={ex.arabic} targets={targetForms} />
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">{ex.translation}</div>
+        </li>
+      ))}
+    </ul>
+  );
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <StageBadge stage={3} />
-        <div className="arabic-quran text-2xl">{word.arabic}</div>
+        <span className="truncate text-[11px] uppercase tracking-wider text-muted-foreground">
+          {data.topic}
+        </span>
       </div>
 
-      {phase !== "comprehension" && (
-        <ul className="space-y-3">
-          {data.exchanges.slice(0, revealed + 1).map((ex, i) => (
-            <li
-              key={i}
-              className={`rounded-xl border border-border p-3 ${
-                ex.speaker === "A" ? "bg-card" : "bg-surface"
-              }`}
-            >
-              <div className="mb-1 flex items-center gap-2">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  Speaker {ex.speaker}
-                </span>
-                <button
-                  onClick={() => speak(ex.arabic)}
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  <Volume2 className="h-3 w-3" />
-                </button>
-              </div>
-              <div className={`arabic-quran text-right text-lg ${ex.uses_target ? "text-accent" : ""}`} dir="rtl">
-                {ex.arabic}
-              </div>
-              <div className="mt-1 text-xs text-muted-foreground">{ex.translation}</div>
-            </li>
-          ))}
-        </ul>
-      )}
+      {dialogueList}
 
       {phase === "dialogue" && (
         <Button onClick={revealNext} className="w-full" size="lg">
-          {revealed + 1 < data.exchanges.length ? "Next line" : "Finish"}
+          {revealed + 1 < data.exchanges.length ? "Next line" : "Finish dialogue"}
         </Button>
       )}
 
       {phase === "choice" && (
         <div className="space-y-3">
           <p className="text-sm font-medium">How would Speaker B respond?</p>
-          {data.choice_options.map((opt, i) => (
+          {data.choice_options_arabic.map((opt, i) => (
             <button
               key={i}
               onClick={() => pickChoice(i)}
-              className="block w-full rounded-xl border border-border bg-card p-3 text-left text-sm transition-colors hover:border-foreground/30"
+              className="block w-full rounded-xl border border-border bg-card p-3 text-right transition-colors hover:border-foreground/30"
+              dir="rtl"
             >
-              {opt}
+              <div className="arabic-quran text-lg">
+                <HighlightedArabic text={opt} targets={targetForms} />
+              </div>
+              <div className="mt-1 text-left text-xs text-muted-foreground" dir="ltr">
+                {data.choice_options_translation[i]}
+              </div>
             </button>
           ))}
         </div>
@@ -191,9 +255,19 @@ export function Stage3Listening({
                 : "bg-warning/15 text-warning-foreground"
             }`}
           >
-            {choicePicked === data.correct_choice_index
-              ? "Correct."
-              : `Better answer: "${data.choice_options[data.correct_choice_index]}"`}
+            {choicePicked === data.correct_choice_index ? (
+              "Correct."
+            ) : (
+              <>
+                <div>Better answer:</div>
+                <div className="arabic-quran mt-1 text-right text-lg" dir="rtl">
+                  <HighlightedArabic
+                    text={data.choice_options_arabic[data.correct_choice_index]}
+                    targets={targetForms}
+                  />
+                </div>
+              </>
+            )}
           </div>
           <Button onClick={continueAfterChoice} className="w-full">
             Continue
@@ -201,23 +275,31 @@ export function Stage3Listening({
         </div>
       )}
 
-      {phase === "comprehension" && (
-        <div className="space-y-3">
-          <p className="text-xs uppercase tracking-wider text-muted-foreground">
-            Comprehension {compIndex + 1} / {data.comprehension.length}
-          </p>
-          <p className="font-medium">{data.comprehension[compIndex].question}</p>
+      {phase === "questions" && (
+        <div className="space-y-3 rounded-2xl border border-border bg-card/60 p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              {data.questions[qIndex].kind === "meaning"
+                ? "Meaning question"
+                : "Role / function question"}{" "}
+              · {qIndex + 1} / {data.questions.length}
+            </p>
+            <span className="arabic-quran text-base" dir="rtl">
+              {data.questions[qIndex].target_word}
+            </span>
+          </div>
+          <p className="font-medium">{data.questions[qIndex].question}</p>
           <div className="space-y-2">
-            {data.comprehension[compIndex].options.map((opt, i) => {
-              const isCorrect = i === data.comprehension[compIndex].correct_index;
-              const picked = compPicked === i;
+            {data.questions[qIndex].options.map((opt, i) => {
+              const isCorrect = i === data.questions[qIndex].correct_index;
+              const picked = qPicked === i;
               return (
                 <button
                   key={i}
-                  onClick={() => pickComp(i)}
-                  disabled={compPicked !== null}
+                  onClick={() => pickQ(i)}
+                  disabled={qPicked !== null}
                   className={`block w-full rounded-xl border p-3 text-left text-sm transition-colors ${
-                    compPicked === null
+                    qPicked === null
                       ? "border-border bg-card hover:border-foreground/30"
                       : picked && isCorrect
                         ? "border-success bg-success/10 text-success"

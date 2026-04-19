@@ -1,15 +1,18 @@
 import { useEffect, useState } from "react";
 import type { Word } from "@/lib/db";
 import { useServerFn } from "@tanstack/react-start";
-import { generateCloze } from "@/lib/ai.functions";
+import { generateMisusePair, gradeMisuseExplanation } from "@/lib/ai.functions";
 import type { Grade } from "@/lib/srs";
 import { StageBadge } from "../StageBadge";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
-function stripDiacritics(s: string) {
-  return s.replace(/[\u064B-\u0652\u0670\u0640]/g, "").trim();
+interface Pair {
+  target_word: string;
+  target_meaning: string;
+  sentences: { arabic: string; translation: string; is_correct: boolean }[];
+  issue: string;
 }
 
 export function Stage4Cloze({
@@ -19,11 +22,14 @@ export function Stage4Cloze({
   word: Word;
   onComplete: (grade: Grade) => void;
 }) {
-  const generate = useServerFn(generateCloze);
-  const [data, setData] = useState<{ sentence: string; correct_answer: string; explanation: string } | null>(null);
+  const generate = useServerFn(generateMisusePair);
+  const grade = useServerFn(gradeMisuseExplanation);
+  const [data, setData] = useState<Pair | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [answer, setAnswer] = useState("");
-  const [result, setResult] = useState<"correct" | "close" | "wrong" | null>(null);
+  const [pickedIdx, setPickedIdx] = useState<number | null>(null);
+  const [explanation, setExplanation] = useState("");
+  const [grading, setGrading] = useState(false);
+  const [result, setResult] = useState<{ grade: "strong" | "adequate" | "weak"; feedback: string } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -33,7 +39,7 @@ export function Stage4Cloze({
         if (alive) setData(r);
       } catch (e) {
         console.error(e);
-        if (alive) setError("Could not generate cloze.");
+        if (alive) setError("Could not generate exercise.");
       }
     })();
     return () => {
@@ -53,76 +59,136 @@ export function Stage4Cloze({
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-3 text-muted-foreground">
         <Loader2 className="h-5 w-5 animate-spin" />
-        <p className="text-sm">Building cloze…</p>
+        <p className="text-sm">Building usage check…</p>
       </div>
     );
   }
 
-  const submit = () => {
-    const a = answer.trim();
-    if (!a) return;
-    const exact = a === data.correct_answer;
-    const stripped = stripDiacritics(a) === stripDiacritics(data.correct_answer);
-    if (exact) setResult("correct");
-    else if (stripped) setResult("close");
-    else setResult("wrong");
+  const incorrectIdx = data.sentences.findIndex((s) => !s.is_correct);
+
+  const submit = async () => {
+    if (pickedIdx === null || !explanation.trim()) return;
+    setGrading(true);
+    try {
+      const r = await grade({
+        data: {
+          targetWord: data.target_word,
+          targetMeaning: data.target_meaning,
+          incorrectSentence: data.sentences[incorrectIdx].arabic,
+          groundTruthIssue: data.issue,
+          userExplanation: explanation.trim(),
+          pickedCorrectSentence: pickedIdx === incorrectIdx,
+        },
+      });
+      setResult(r);
+    } catch (e) {
+      console.error(e);
+      setResult({
+        grade: pickedIdx === incorrectIdx ? "adequate" : "weak",
+        feedback: "Couldn't grade automatically.",
+      });
+    } finally {
+      setGrading(false);
+    }
   };
 
   const proceed = () => {
     if (!result) return;
-    const grade: Grade = result === "correct" ? "correct" : result === "close" ? "partial" : "struggled";
-    onComplete(grade);
+    const g: Grade =
+      result.grade === "strong" ? "correct" : result.grade === "adequate" ? "partial" : "struggled";
+    onComplete(g);
+  };
+
+  const colorMap: Record<string, string> = {
+    strong: "border-success/40 bg-success/10 text-success",
+    adequate: "border-stage-3/40 bg-stage-3/10",
+    weak: "border-destructive/40 bg-destructive/10 text-destructive",
   };
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <StageBadge stage={4} />
-        <div className="arabic-quran text-2xl">{word.arabic}</div>
+        <div className="arabic-quran text-2xl">{data.target_word}</div>
       </div>
-      <p className="text-sm text-muted-foreground">Type the missing word in Arabic.</p>
+      <p className="text-sm text-muted-foreground">
+        One of these sentences uses the word <span className="arabic-quran">{data.target_word}</span> incorrectly.
+        Pick it, then explain the mistake in your own words.
+      </p>
 
-      <div className="rounded-2xl border border-border bg-card p-5">
-        <div className="arabic-quran text-right text-2xl leading-loose" dir="rtl">
-          {data.sentence.replace(/_+/g, "____")}
-        </div>
-      </div>
+      <ul className="space-y-3">
+        {data.sentences.map((s, i) => {
+          const picked = pickedIdx === i;
+          const reveal = result !== null;
+          const isWrong = !s.is_correct;
+          return (
+            <li key={i}>
+              <button
+                onClick={() => !result && setPickedIdx(i)}
+                disabled={!!result}
+                className={`block w-full rounded-xl border p-4 text-right transition-colors ${
+                  reveal
+                    ? isWrong
+                      ? "border-destructive/60 bg-destructive/5"
+                      : "border-success/60 bg-success/5"
+                    : picked
+                      ? "border-foreground bg-card"
+                      : "border-border bg-card hover:border-foreground/30"
+                }`}
+                dir="rtl"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="rounded-md border border-border bg-background px-2 py-0.5 font-mono text-[10px] text-muted-foreground" dir="ltr">
+                    {String.fromCharCode(65 + i)}
+                  </span>
+                  {reveal && (
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                        isWrong ? "bg-destructive/15 text-destructive" : "bg-success/15 text-success"
+                      }`}
+                      dir="ltr"
+                    >
+                      {isWrong ? "Misused" : "Correct"}
+                    </span>
+                  )}
+                </div>
+                <div className="arabic-quran mt-2 text-xl leading-loose">{s.arabic}</div>
+                <div className="mt-1 text-left text-xs text-muted-foreground" dir="ltr">
+                  {s.translation}
+                </div>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
 
-      <Input
-        value={answer}
-        onChange={(e) => setAnswer(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !result) submit();
-        }}
-        placeholder="Your answer"
-        className="arabic text-right text-2xl"
-        dir="rtl"
+      <Textarea
+        value={explanation}
+        onChange={(e) => setExplanation(e.target.value)}
+        placeholder="Explain in English what's wrong with the misused sentence."
+        className="min-h-[120px]"
         disabled={!!result}
       />
 
       {result && (
-        <div
-          className={`rounded-xl border p-4 ${
-            result === "correct"
-              ? "border-success/40 bg-success/10 text-success"
-              : result === "close"
-                ? "border-warning/40 bg-warning/15"
-                : "border-destructive/40 bg-destructive/10 text-destructive"
-          }`}
-        >
-          <div className="text-sm font-semibold">
-            {result === "correct" ? "Exactly right." : result === "close" ? "Right word, watch the diacritics." : "Not quite."}
-          </div>
-          <div className="mt-2 arabic-quran text-right text-xl text-foreground" dir="rtl">
-            {data.correct_answer}
-          </div>
-          <p className="mt-2 text-sm text-foreground/80">{data.explanation}</p>
+        <div className={`rounded-xl border p-4 ${colorMap[result.grade]}`}>
+          <div className="text-sm font-semibold uppercase tracking-wider">{result.grade}</div>
+          <p className="mt-2 text-sm text-foreground/90">{result.feedback}</p>
+          <p className="mt-3 text-xs text-foreground/70">
+            <span className="font-semibold">The actual issue:</span> {data.issue}
+          </p>
         </div>
       )}
 
       {!result ? (
-        <Button onClick={submit} disabled={!answer.trim()} className="w-full" size="lg">
-          Check
+        <Button
+          onClick={submit}
+          disabled={pickedIdx === null || !explanation.trim() || grading}
+          className="w-full"
+          size="lg"
+        >
+          {grading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+          Submit
         </Button>
       ) : (
         <Button onClick={proceed} className="w-full" size="lg">
