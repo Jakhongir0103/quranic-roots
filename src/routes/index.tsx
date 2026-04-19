@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate, redirect } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useLiveQuery } from "dexie-react-hooks";
 import { useEffect, useMemo } from "react";
 import { db } from "@/lib/db";
@@ -7,9 +7,6 @@ import { Button } from "@/components/ui/button";
 import { ArrowRight, Sparkles, Library } from "lucide-react";
 
 export const Route = createFileRoute("/")({
-  loader: () => {
-    throw redirect({ to: '/decks' })
-  },
   head: () => ({
     meta: [
       { title: "Today — Mizan" },
