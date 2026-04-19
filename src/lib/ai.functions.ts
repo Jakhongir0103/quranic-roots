@@ -4,11 +4,14 @@ import { z } from "zod";
 const GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const DEFAULT_MODEL = "google/gemini-3-flash-preview";
 
-async function callGemini(opts: {
-  system: string;
-  user: string;
-  tool?: { name: string; description: string; parameters: unknown };
-}) {
+async function callGeminiOnce(
+  opts: {
+    system: string;
+    user: string;
+    tool?: { name: string; description: string; parameters: unknown };
+  },
+  signal: AbortSignal,
+) {
   const apiKey = process.env.LOVABLE_API_KEY;
   if (!apiKey) throw new Error("LOVABLE_API_KEY is not configured");
 
@@ -41,6 +44,7 @@ async function callGemini(opts: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
+    signal,
   });
 
   if (res.status === 429) throw new Error("RATE_LIMIT");
@@ -59,6 +63,34 @@ async function callGemini(opts: {
     return JSON.parse(args);
   }
   return choice?.content ?? "";
+}
+
+async function callGemini(opts: {
+  system: string;
+  user: string;
+  tool?: { name: string; description: string; parameters: unknown };
+}) {
+  // Single retry with a per-attempt timeout — protects against transient
+  // "fetch failed" / upstream timeout errors that otherwise blank the screen.
+  const ATTEMPTS = 2;
+  const TIMEOUT_MS = 45_000;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), TIMEOUT_MS);
+    try {
+      return await callGeminiOnce(opts, ac.signal);
+    } catch (e) {
+      lastErr = e;
+      const msg = (e as Error)?.message ?? "";
+      // Don't retry user-actionable errors
+      if (msg === "RATE_LIMIT" || msg === "CREDITS") throw e;
+      console.warn(`Gemini call failed (attempt ${attempt + 1}/${ATTEMPTS})`, msg);
+    } finally {
+      clearTimeout(t);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("AI_ERROR");
 }
 
 /* ============================================================
@@ -366,19 +398,10 @@ Feedback: 2-3 sentences, specific.`,
 const convoTurnSchema = {
   type: "object",
   properties: {
-    arabic: { type: "string", description: "AI's next Arabic line (with tashkeel)" },
-    translation: { type: "string", description: "English gloss" },
-    expected_word: {
-      type: "string",
-      description: "The deck word the user is expected to use in their reply (Arabic, with tashkeel)",
-    },
-    prompt_hint: {
-      type: "string",
-      description: "Short English hint to the user about the kind of reply expected",
-    },
+    arabic: { type: "string", description: "AI's next Arabic line (with full tashkeel)" },
     is_final: { type: "boolean", description: "True if this is the closing line of the conversation" },
   },
-  required: ["arabic", "translation", "expected_word", "prompt_hint", "is_final"],
+  required: ["arabic", "is_final"],
   additionalProperties: false,
 };
 
@@ -400,8 +423,8 @@ export const generateConversationTurn = createServerFn({ method: "POST" })
     }),
   )
   .handler(async ({ data }) => {
-    const deckList = data.deckWords.map((w) => `${w.arabic} (${w.meaning})`).join(", ");
-    const remaining = data.remainingWords.join(", ");
+    const deckList = data.deckWords.map((w) => `${w.arabic} (${w.meaning})`).join("، ");
+    const remaining = data.remainingWords.join("، ");
     const transcript = data.history
       .map((h) => `${h.role === "ai" ? "AI" : "USER"}: ${h.arabic}`)
       .join("\n");
@@ -409,25 +432,27 @@ export const generateConversationTurn = createServerFn({ method: "POST" })
 
     return (await callGemini({
       system:
-        "You hold a fully Arabic conversation with a learner about a Quranic theme (a verse, divine attribute, prayer, guidance, mercy, the day of judgment, etc.). Use classical register with full tashkeel. Keep each turn short (1-2 sentences). After your line, the learner must reply in Arabic using one specific deck word.",
-      user: `Deck words available: ${deckList}.
-Words still un-used in user replies (prefer these): ${remaining || "(all used at least once — feel free to repeat any)"}.
-Conversation so far:
-${transcript || "(none yet)"}
-Turn number: ${data.turnNumber + 1} of ${data.maxTurns}.
+        "أنت محاور باللغة العربية الفصحى مع متعلم في سياق قرآني (آية، صفة من صفات الله، الهداية، الرحمة، يوم الدين، إلخ). استخدم تشكيلًا كاملاً. اجعل دورك قصيرًا (جملة أو جملتين). يجب أن تصاغ كل جملة بحيث يضطر المتعلم في رده إلى استعمال إحدى كلمات الرصيد المعطى — لكن لا تذكر الكلمة المتوقعة ولا تلمّح إليها صراحةً ولا تطلب منه استخدام كلمة بعينها. اجعل السياق وحده يقود اختيار الكلمة.",
+      user: `كلمات الرصيد المتاحة (لا تذكرها للمتعلم بشكل قائمة): ${deckList}.
+الكلمات التي لم يستعملها المتعلم بعد (فضّل أن يقوده السياق إليها): ${remaining || "(جميعها استُعملت — يمكن تكرار أيٍّ منها)"}.
 
-Produce the AI's next short Arabic line on a Quranic-context topic. Choose ONE deck word the learner should use in their next reply (prefer one from the un-used list; pick a word that fits the conversational opening you create). Provide an English gloss of your line and a brief English prompt hint about the expected reply.
-${isClosing ? "This is the FINAL turn — wrap the conversation gracefully and set is_final=true." : "Set is_final=false."}`,
+المحادثة حتى الآن:
+${transcript || "(لم تبدأ بعد)"}
+
+هذا هو دورك رقم ${data.turnNumber + 1} من ${data.maxTurns}.
+
+اكتب الجملة العربية التالية فقط، بحيث:
+1) تبقى ضمن سياق قرآني/إيماني واضح ومتصل بما سبق.
+2) تكون مفتوحة بطريقةٍ تجعل ردًّا طبيعيًا يستلزم استخدام واحدة من كلمات الرصيد، دون أن تذكر تلك الكلمة أو تشير إليها.
+3) لا تستخدم صيغة سؤالية مباشرة من نوع "استعمل كلمة كذا".
+${isClosing ? "هذا هو الدور الأخير — اختم المحادثة بلطف واجعل is_final=true." : "اجعل is_final=false."}`,
       tool: {
         name: "return_turn",
-        description: "Return next conversation turn",
+        description: "Return next conversation turn (Arabic only)",
         parameters: convoTurnSchema,
       },
     })) as {
       arabic: string;
-      translation: string;
-      expected_word: string;
-      prompt_hint: string;
       is_final: boolean;
     };
   });
@@ -436,10 +461,15 @@ const convoGradeSchema = {
   type: "object",
   properties: {
     grade: { type: "string", enum: ["strong", "adequate", "weak"] },
-    feedback: { type: "string" },
+    feedback: { type: "string", description: "Short Arabic feedback (1-2 sentences)" },
+    matched_word: {
+      type: "string",
+      description:
+        "The deck word the learner actually used (Arabic, exact form from the deck). Empty string if none was used.",
+    },
     word_used_correctly: { type: "boolean" },
   },
-  required: ["grade", "feedback", "word_used_correctly"],
+  required: ["grade", "feedback", "matched_word", "word_used_correctly"],
   additionalProperties: false,
 };
 
@@ -447,27 +477,34 @@ export const gradeConversationReply = createServerFn({ method: "POST" })
   .inputValidator(
     z.object({
       aiLine: z.string(),
-      expectedWord: z.string(),
-      expectedMeaning: z.string(),
+      deckWords: z.array(z.object({ arabic: z.string(), meaning: z.string() })).min(1).max(20),
       userReply: z.string(),
     }),
   )
   .handler(async ({ data }) => {
+    const list = data.deckWords.map((w) => `${w.arabic} = ${w.meaning}`).join("\n");
     return (await callGemini({
       system:
-        "You are a strict Arabic-conversation grader. The learner's reply is judged PRIMARILY on whether the expected deck word is used correctly (right meaning, right grammatical role, right context). Whether the rest of the sentence is fully correct matters LESS. Be strict — generic or off-topic uses are 'weak'.",
+        "You are a strict Arabic-conversation grader. The learner is expected to reply using ONE of the deck words below — they were NOT told which one. Judge PRIMARILY on whether one of the deck words is used correctly (right meaning, right grammatical role, fits the AI's previous line in context). Whether the rest of the sentence is fully correct matters LESS. Be strict — if no deck word is used, or it is used in the wrong sense, that is 'weak'.",
       user: `AI's previous line: ${data.aiLine}
-Expected deck word: ${data.expectedWord} (${data.expectedMeaning})
+Deck words (any one of these would count if used correctly):
+${list}
+
 User's reply: ${data.userReply}
 
-Grade strictly:
-- "strong": the expected word is present and used with correct meaning + role + contextual fit.
-- "adequate": the word is present and roughly fits, but with minor issues (slightly off context, minor grammatical mismatch).
-- "weak": the word is missing, used with the wrong meaning, or used in a way that does not fit the AI's line at all.
+Identify which deck word the user actually used (matched_word — exact Arabic form from the list, or empty string if none). Then grade strictly:
+- "strong": one of the deck words is present and used with correct meaning + role + contextual fit.
+- "adequate": a deck word is present and roughly fits, but with minor issues (slightly off context, minor grammatical mismatch).
+- "weak": no deck word is used, or it is used with the wrong meaning, or it does not fit the AI's line.
 
-Also return word_used_correctly (boolean) and 1-2 sentences of feedback in English.`,
+Feedback: 1-2 short sentences in Arabic.`,
       tool: { name: "return_grade", description: "Strict per-turn grade", parameters: convoGradeSchema },
-    })) as { grade: "strong" | "adequate" | "weak"; feedback: string; word_used_correctly: boolean };
+    })) as {
+      grade: "strong" | "adequate" | "weak";
+      feedback: string;
+      matched_word: string;
+      word_used_correctly: boolean;
+    };
   });
 
 /* ============================================================
@@ -494,4 +531,55 @@ export const validateAndEnrichWord = createServerFn({ method: "POST" })
       user: `Word: "${data.word}". If this is a valid Arabic word (preferably Quranic register), return valid=true with concise metadata. Add full tashkeel to the arabic field. If the input is not Arabic at all, return valid=false.`,
       tool: { name: "return_validation", description: "Return validation", parameters: validateSchema },
     })) as { valid: boolean; arabic: string; meaning: string; partOfSpeech: string; usageNote: string };
+  });
+
+/* ============================================================
+ * Generate a deck from a natural-language prompt
+ * e.g. "the 20 most occurring words in surah al baqarah"
+ * ============================================================ */
+const promptDeckSchema = {
+  type: "object",
+  properties: {
+    deckName: { type: "string", description: "Short, descriptive deck name in English" },
+    domain: { type: "string", description: "Short domain label (e.g. 'Surah Al-Baqarah')" },
+    words: {
+      type: "array",
+      minItems: 3,
+      maxItems: 30,
+      items: {
+        type: "object",
+        properties: {
+          arabic: { type: "string", description: "The Arabic word with FULL tashkeel" },
+          meaning: { type: "string", description: "Concise primary English meaning" },
+          partOfSpeech: { type: "string" },
+          usageNote: { type: "string", description: "1 short note about how the word appears in the Quran" },
+        },
+        required: ["arabic", "meaning", "partOfSpeech", "usageNote"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["deckName", "domain", "words"],
+  additionalProperties: false,
+};
+
+export const generateDeckFromPrompt = createServerFn({ method: "POST" })
+  .inputValidator(z.object({ prompt: z.string().min(3).max(500) }))
+  .handler(async ({ data }) => {
+    return (await callGemini({
+      system:
+        "You build curated Quranic-Arabic vocabulary decks from a learner's natural-language request. Words must be real Arabic words from the Qur'an (or strongly Quranic-register). Always include full tashkeel. Pick a reasonable count if the user did not specify (default 12-15). Skip very common particles unless the user explicitly asked for them.",
+      user: `Build a vocabulary deck for this request: "${data.prompt}"
+
+Return a deck name, a short domain label, and a list of words with Arabic (full tashkeel), concise English meaning, part of speech, and a short usage note about how the word appears in the Qur'an.`,
+      tool: {
+        name: "return_deck",
+        description: "Return a generated deck",
+        parameters: promptDeckSchema,
+      },
+    })) as {
+      deckName: string;
+      domain: string;
+      words: { arabic: string; meaning: string; partOfSpeech: string; usageNote: string }[];
+    };
   });

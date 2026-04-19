@@ -238,9 +238,6 @@ export function Stage3Listening({
               <div className="arabic-quran text-lg">
                 <HighlightedArabic text={opt} targets={targetForms} />
               </div>
-              <div className="mt-1 text-left text-xs text-muted-foreground" dir="ltr">
-                {data.choice_options_translation[i]}
-              </div>
             </button>
           ))}
         </div>

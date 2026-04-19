@@ -11,11 +11,9 @@ import { Textarea } from "@/components/ui/textarea";
 interface Turn {
   role: "ai" | "user";
   arabic: string;
-  translation?: string;
-  expected_word?: string;
-  prompt_hint?: string;
   feedback?: string;
   grade?: "strong" | "adequate" | "weak";
+  matched_word?: string;
   is_final?: boolean;
 }
 
@@ -59,18 +57,12 @@ export function Stage5Interrogation({
     () => words.map((w) => ({ arabic: w.arabic, meaning: w.meaning })),
     [words],
   );
-  const meaningOf = useMemo(() => {
-    const m = new Map<string, string>();
-    words.forEach((w) => m.set(w.arabic, w.meaning));
-    return m;
-  }, [words]);
 
   // Drive next AI turn whenever the conversation is waiting on one
   useEffect(() => {
     if (done || error) return;
     const last = turns[turns.length - 1];
-    const aiOwesNext =
-      turns.length === 0 || (last && last.role === "user" && !last.is_final);
+    const aiOwesNext = turns.length === 0 || (last && last.role === "user" && !last.is_final);
     if (!aiOwesNext) return;
     if (requested.current) return;
     requested.current = true;
@@ -95,9 +87,6 @@ export function Stage5Interrogation({
           {
             role: "ai",
             arabic: r.arabic,
-            translation: r.translation,
-            expected_word: r.expected_word,
-            prompt_hint: r.prompt_hint,
             is_final: r.is_final,
           },
         ]);
@@ -107,7 +96,7 @@ export function Stage5Interrogation({
         }
       } catch (e) {
         console.error(e);
-        setError("Could not continue the conversation.");
+        setError("تعذّر متابعة المحادثة.");
       } finally {
         setLoadingAi(false);
         requested.current = false;
@@ -127,35 +116,38 @@ export function Stage5Interrogation({
     onComplete(g);
   };
 
-  // When done becomes true and last turn is AI's final closing line, allow user to finish
   const lastTurn = turns[turns.length - 1];
   const awaitingUser = lastTurn?.role === "ai" && !done;
   const canFinish = done && lastTurn?.role === "ai";
 
   const submitReply = async () => {
-    if (!reply.trim() || !lastTurn || lastTurn.role !== "ai" || !lastTurn.expected_word) return;
+    if (!reply.trim() || !lastTurn || lastTurn.role !== "ai") return;
     setGrading(true);
     const userText = reply.trim();
     try {
       const r = await grade({
         data: {
           aiLine: lastTurn.arabic,
-          expectedWord: lastTurn.expected_word,
-          expectedMeaning: meaningOf.get(lastTurn.expected_word) ?? "",
+          deckWords: wordPayload,
           userReply: userText,
         },
       });
       setTurns((prev) => [
         ...prev,
-        { role: "user", arabic: userText, feedback: r.feedback, grade: r.grade },
+        {
+          role: "user",
+          arabic: userText,
+          feedback: r.feedback,
+          grade: r.grade,
+          matched_word: r.matched_word,
+        },
       ]);
       const nextScores = [...scores, r.grade];
       setScores(nextScores);
-      if (r.word_used_correctly) {
-        setUsedWords((prev) => new Set(prev).add(lastTurn.expected_word!));
+      if (r.word_used_correctly && r.matched_word) {
+        setUsedWords((prev) => new Set(prev).add(r.matched_word));
       }
       setReply("");
-      // If AI's last turn was already final, finalize after user replies.
       if (lastTurn.is_final) {
         setDone(true);
         finalize(nextScores);
@@ -164,7 +156,7 @@ export function Stage5Interrogation({
       console.error(e);
       setTurns((prev) => [
         ...prev,
-        { role: "user", arabic: userText, feedback: "Couldn't grade.", grade: "adequate" },
+        { role: "user", arabic: userText, feedback: "تعذّر التقييم.", grade: "adequate" },
       ]);
     } finally {
       setGrading(false);
@@ -175,7 +167,7 @@ export function Stage5Interrogation({
     return (
       <div className="space-y-4 text-center">
         <p className="text-sm text-destructive">{error}</p>
-        <Button onClick={() => onComplete("weak")}>Skip</Button>
+        <Button onClick={() => onComplete("weak")}>تخطّي</Button>
       </div>
     );
   }
@@ -185,11 +177,11 @@ export function Stage5Interrogation({
       <div className="flex items-center justify-between">
         <StageBadge stage={5} />
         <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-          {usedWords.size} / {words.length} words used
+          {usedWords.size} / {words.length} كلمات استُعملت
         </span>
       </div>
       <p className="text-sm text-muted-foreground">
-        Continue the Arabic conversation. Reply using the highlighted deck word in each turn.
+        تابع المحادثة بالعربية. اختر بنفسك الكلمة المناسبة من الرصيد دون أن يخبرك النظام أيّها.
       </p>
 
       <ul className="space-y-3">
@@ -202,13 +194,13 @@ export function Stage5Interrogation({
           >
             <div className="mb-1 flex items-center justify-between">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                {t.role === "ai" ? "AI" : "You"}
+                {t.role === "ai" ? "AI" : "أنت"}
               </span>
               {t.role === "ai" && (
                 <button
                   onClick={() => speak(t.arabic)}
                   className="text-muted-foreground hover:text-foreground"
-                  aria-label="Play"
+                  aria-label="استمع"
                 >
                   <Volume2 className="h-3 w-3" />
                 </button>
@@ -217,24 +209,14 @@ export function Stage5Interrogation({
             <div className="arabic-quran text-right text-lg leading-loose" dir="rtl">
               {t.arabic}
             </div>
-            {t.translation && (
-              <div className="mt-1 text-xs text-muted-foreground">{t.translation}</div>
-            )}
-            {t.role === "ai" && t.expected_word && i === turns.length - 1 && awaitingUser && (
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-border bg-background/60 px-3 py-2">
-                <div className="text-[11px] text-muted-foreground">
-                  Reply using:{" "}
-                  <span className="arabic-quran text-base text-foreground">{t.expected_word}</span>
-                </div>
-                {t.prompt_hint && (
-                  <div className="text-[11px] italic text-muted-foreground">{t.prompt_hint}</div>
-                )}
-              </div>
-            )}
             {t.role === "user" && t.grade && t.feedback && (
-              <div className={`mt-2 rounded-lg border p-2 text-xs ${colorMap[t.grade]}`}>
-                <span className="font-semibold uppercase tracking-wider">{t.grade}</span>
-                <span className="ml-2">{t.feedback}</span>
+              <div className={`mt-2 rounded-lg border p-2 text-xs ${colorMap[t.grade]}`} dir="rtl">
+                <span className="arabic font-semibold">{t.feedback}</span>
+                {t.matched_word ? (
+                  <span className="arabic-quran ml-2 text-foreground/80">
+                    · {t.matched_word}
+                  </span>
+                ) : null}
               </div>
             )}
           </li>
@@ -244,7 +226,7 @@ export function Stage5Interrogation({
       {loadingAi && (
         <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          AI is typing…
+          الذكاء الاصطناعي يكتب…
         </div>
       )}
 
@@ -259,7 +241,7 @@ export function Stage5Interrogation({
             disabled={grading}
           />
           <Button onClick={submitReply} disabled={!reply.trim()} className="w-full" size="lg">
-            Send reply
+            إرسال الرد
           </Button>
         </div>
       )}
@@ -267,13 +249,13 @@ export function Stage5Interrogation({
       {grading && (
         <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          Grading your reply…
+          جارٍ تقييم الرد…
         </div>
       )}
 
       {canFinish && (
         <Button onClick={() => finalize(scores)} className="w-full" size="lg">
-          Finish conversation
+          إنهاء المحادثة
         </Button>
       )}
     </div>

@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/lib/db";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Lock } from "lucide-react";
+import { ArrowRight, Lock, Plus } from "lucide-react";
 
 export const Route = createFileRoute("/decks/$deckId")({
   head: ({ params }) => ({
@@ -49,13 +49,25 @@ function DeckPreview() {
           {deck.wordCount} words · studied in batches of 7. Each word travels through 5 stages
           independently.
         </p>
-        <Button
-          className="mt-4 rounded-xl"
-          size="lg"
-          onClick={() => navigate({ to: "/study/$deckId", params: { deckId } })}
-        >
-          Begin study <ArrowRight className="ml-2 h-4 w-4" />
-        </Button>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button
+            className="rounded-xl"
+            size="lg"
+            onClick={() => navigate({ to: "/study/$deckId", params: { deckId } })}
+          >
+            Begin study <ArrowRight className="ml-2 h-4 w-4" />
+          </Button>
+          {deck.type === "custom" && (
+            <Button
+              variant="secondary"
+              className="rounded-xl"
+              size="lg"
+              onClick={() => navigate({ to: "/decks/new", search: { deckId: id } })}
+            >
+              <Plus className="mr-2 h-4 w-4" /> Add more words
+            </Button>
+          )}
+        </div>
       </section>
 
       {[...grouped.entries()]
