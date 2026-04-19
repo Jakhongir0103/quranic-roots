@@ -7,6 +7,9 @@ import { Button } from "@/components/ui/button";
 import { ArrowRight, Sparkles, Library } from "lucide-react";
 
 export const Route = createFileRoute("/")({
+  loader: () => {
+    throw redirect({ to: '/decks' })
+  },
   head: () => ({
     meta: [
       { title: "Today — Mizan" },
