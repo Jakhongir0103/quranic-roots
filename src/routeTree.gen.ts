@@ -9,11 +9,18 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ProgressRouteImport } from './routes/progress'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DecksIndexRouteImport } from './routes/decks.index'
+import { Route as StudyDeckIdRouteImport } from './routes/study.$deckId'
 import { Route as DecksNewRouteImport } from './routes/decks.new'
 import { Route as DecksDeckIdRouteImport } from './routes/decks.$deckId'
 
+const ProgressRoute = ProgressRouteImport.update({
+  id: '/progress',
+  path: '/progress',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -22,6 +29,11 @@ const IndexRoute = IndexRouteImport.update({
 const DecksIndexRoute = DecksIndexRouteImport.update({
   id: '/decks/',
   path: '/decks/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StudyDeckIdRoute = StudyDeckIdRouteImport.update({
+  id: '/study/$deckId',
+  path: '/study/$deckId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DecksNewRoute = DecksNewRouteImport.update({
@@ -37,40 +49,74 @@ const DecksDeckIdRoute = DecksDeckIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/progress': typeof ProgressRoute
   '/decks/$deckId': typeof DecksDeckIdRoute
   '/decks/new': typeof DecksNewRoute
+  '/study/$deckId': typeof StudyDeckIdRoute
   '/decks/': typeof DecksIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/progress': typeof ProgressRoute
   '/decks/$deckId': typeof DecksDeckIdRoute
   '/decks/new': typeof DecksNewRoute
+  '/study/$deckId': typeof StudyDeckIdRoute
   '/decks': typeof DecksIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/progress': typeof ProgressRoute
   '/decks/$deckId': typeof DecksDeckIdRoute
   '/decks/new': typeof DecksNewRoute
+  '/study/$deckId': typeof StudyDeckIdRoute
   '/decks/': typeof DecksIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/decks/$deckId' | '/decks/new' | '/decks/'
+  fullPaths:
+    | '/'
+    | '/progress'
+    | '/decks/$deckId'
+    | '/decks/new'
+    | '/study/$deckId'
+    | '/decks/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/decks/$deckId' | '/decks/new' | '/decks'
-  id: '__root__' | '/' | '/decks/$deckId' | '/decks/new' | '/decks/'
+  to:
+    | '/'
+    | '/progress'
+    | '/decks/$deckId'
+    | '/decks/new'
+    | '/study/$deckId'
+    | '/decks'
+  id:
+    | '__root__'
+    | '/'
+    | '/progress'
+    | '/decks/$deckId'
+    | '/decks/new'
+    | '/study/$deckId'
+    | '/decks/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ProgressRoute: typeof ProgressRoute
   DecksDeckIdRoute: typeof DecksDeckIdRoute
   DecksNewRoute: typeof DecksNewRoute
+  StudyDeckIdRoute: typeof StudyDeckIdRoute
   DecksIndexRoute: typeof DecksIndexRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/progress': {
+      id: '/progress'
+      path: '/progress'
+      fullPath: '/progress'
+      preLoaderRoute: typeof ProgressRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -83,6 +129,13 @@ declare module '@tanstack/react-router' {
       path: '/decks'
       fullPath: '/decks/'
       preLoaderRoute: typeof DecksIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/study/$deckId': {
+      id: '/study/$deckId'
+      path: '/study/$deckId'
+      fullPath: '/study/$deckId'
+      preLoaderRoute: typeof StudyDeckIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/decks/new': {
@@ -104,8 +157,10 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ProgressRoute: ProgressRoute,
   DecksDeckIdRoute: DecksDeckIdRoute,
   DecksNewRoute: DecksNewRoute,
+  StudyDeckIdRoute: StudyDeckIdRoute,
   DecksIndexRoute: DecksIndexRoute,
 }
 export const routeTree = rootRouteImport
